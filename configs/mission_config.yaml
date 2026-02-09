@@ -1,0 +1,90 @@
+# SG-MRM Mission Configuration
+# This file defines the global simulation parameters
+
+mission:
+  name: "SG-MRM Simulation"
+  description: "Satellite-Ground Multiscale Radio Map Generation"
+  version: "1.0"
+
+# Geographic origin (center point of simulation)
+origin:
+  latitude: 39.9042    # Beijing example (degrees)
+  longitude: 116.4074  # Beijing example (degrees)
+  altitude_m: 50.0     # Ground altitude above sea level
+
+# RF parameters
+rf:
+  frequency_ghz: 10.0           # Operating frequency in GHz
+  tx_power_dbm: 40.0            # Transmit power in dBm
+  tx_polarization: "RHCP"       # Transmit polarization (H/V/RHCP/LHCP)
+  rx_polarization: "RHCP"       # Receive polarization
+
+# Satellite parameters
+satellite:
+  altitude_km: 550.0            # Satellite altitude in km
+  tle_file: null                # Path to TLE file (null for fixed position)
+  # For V1.0: satellite is assumed at zenith
+  # For V2.0: use TLE for orbit propagation
+
+# Time parameters
+time:
+  start: "2024-01-01T00:00:00"  # Simulation start time (ISO format)
+  end: "2024-01-01T23:00:00"    # Simulation end time
+  step_hours: 1                 # Time step in hours
+  timezone: "UTC"               # Timezone
+
+# Layer configurations
+layers:
+  # L1: Macro/Space Layer (256 km coverage, 1000 m/pixel)
+  l1_macro:
+    enabled: true
+    grid_size: 256
+    coverage_km: 256.0
+    resolution_m: 1000.0
+    frequency_ghz: 10.0
+    satellite_altitude_km: 550.0
+    tle_file: null
+    # Atmospheric parameters
+    rain_rate_mm_h: 0.0         # Rain rate (0 for clear sky)
+    # Ionospheric parameters
+    tec: 10.0                   # Total Electron Content (TECU)
+
+  # L2: Terrain Layer (25.6 km coverage, 100 m/pixel)
+  l2_topo:
+    enabled: false              # Disabled for V1.0
+    grid_size: 256
+    coverage_km: 25.6
+    resolution_m: 100.0
+    dem_file: null              # Path to DEM file (.tif or .hgt)
+    satellite_elevation_deg: 45.0
+
+  # L3: Urban Layer (256 m coverage, 1 m/pixel)
+  l3_urban:
+    enabled: true
+    grid_size: 256
+    coverage_km: 0.256
+    resolution_m: 1.0
+    building_shapefile: null    # Path to building shapefile (.shp)
+    satellite_azimuth_deg: 180.0
+    satellite_elevation_deg: 45.0
+
+# Output configuration
+output:
+  directory: "output"           # Output directory
+  format: "png"                 # Output format (png/npy/both)
+  save_individual_layers: true  # Save L1/L2/L3 separately
+  save_composite: true          # Save composite map
+  dpi: 150                      # DPI for PNG output
+  colormap: "viridis"           # Matplotlib colormap
+
+# Performance settings
+performance:
+  enable_profiling: false       # Enable performance profiling
+  parallel_processing: false    # Enable parallel processing (V2.0)
+  num_workers: 4                # Number of parallel workers
+
+# Logging configuration
+logging:
+  level: "INFO"                 # Logging level (DEBUG/INFO/WARNING/ERROR)
+  log_file: "sg_mrm.log"        # Log file path (null for console only)
+  verbose: true                 # Verbose output

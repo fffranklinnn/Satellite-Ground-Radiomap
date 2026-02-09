@@ -1,0 +1,41 @@
+# SG-MRM Requirements
+
+# Core dependencies
+numpy>=1.20.0
+scipy>=1.7.0
+matplotlib>=3.3.0
+pyyaml>=5.4.0
+
+# Geospatial data processing
+# Uncomment when needed for V2.0
+# gdal>=3.0.0
+# rasterio>=1.2.0
+# geopandas>=0.9.0
+# shapely>=1.7.0
+# pyproj>=3.0.0
+
+# Satellite orbit propagation
+# Uncomment when needed for V2.0
+# skyfield>=1.39
+# sgp4>=2.20
+
+# Optional: For advanced visualization
+# cartopy>=0.19.0
+# folium>=0.12.0
+
+# Testing
+pytest>=6.2.0
+pytest-cov>=2.12.0
+
+# Development tools
+# black>=21.0
+# flake8>=3.9.0
+# mypy>=0.900
+
+# Performance profiling
+# line_profiler>=3.3.0
+# memory_profiler>=0.58.0
+
+# Documentation (optional)
+# sphinx>=4.0.0
+# sphinx-rtd-theme>=0.5.0

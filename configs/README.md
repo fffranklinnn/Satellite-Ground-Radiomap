@@ -66,5 +66,5 @@ Each layer (L1/L2/L3) has specific parameters:
 
 ## Version Notes
 
-- **V1.0**: L1 and L3 enabled, L2 disabled (flat terrain assumption)
-- **V2.0**: All layers enabled with full physics models
+- **V1.0**: L1 fully enabled with real IONEX/ERA5/TLE data; L2 and L3 return zero loss (placeholders)
+- **V2.0**: All layers enabled with full physics models (DEM terrain, building shapefiles, GPU ray tracing)

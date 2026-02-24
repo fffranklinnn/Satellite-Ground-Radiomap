@@ -67,7 +67,10 @@ data/**/*.shx
 data/**/*.dbf
 data/**/*.prj
 data/**/*.tle
+data/*.tle
 data/**/*.mat
+data/**/*.gz
+data/**/*.zip
 
 # Keep directory structure
 !data/**/.gitkeep

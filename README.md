@@ -100,7 +100,7 @@ python examples/v1_static_link.py
 ## Project Structure
 
 ```
-SG-RM/
+Satellite-Ground-Radiomap/
 ├── configs/              # Configuration files
 ├── data/                 # Data sources (TLE, DEM, shapefiles)
 ├── src/
@@ -116,21 +116,25 @@ SG-RM/
 
 ## Development Roadmap
 
-### V1.0: Static Link Closure ✓
+### V1.0: L1 Macro Layer (Current) ✓
 
-- [x] L1 basic satellite positioning
-- [x] L3 building shadow calculation
-- [x] Layer aggregation
-- [x] Basic visualization
+- [x] L1 宏观层完整实现：FSPL、大气衰减（ITU-R P.618 简化 + ERA5 IWV 增强）、电离层效应（ITU-R P.531 + IONEX 实测 TEC）
+- [x] 卫星位置：固定天顶方向（TLE 加载器已集成，动态定位为 V2.0 默认路径）
+- [x] 多层聚合引擎（dB 域叠加 + 双三次插值）
+- [x] 数据加载器：IONEX、ERA5 NetCDF、TLE
+- [x] 可视化工具：静态图、时序图、动画帧导出
+- [x] 49+ 单元测试
+- [ ] L2 地形层：占位实现，始终返回零损耗
+- [ ] L3 城市层：占位实现，无建筑数据时返回零损耗
 
 ### V2.0: Full Dynamic Simulation (Planned)
 
-- [ ] TLE-based orbit propagation
-- [ ] Full ITU-R P.618 atmospheric model
-- [ ] DEM-based terrain obstruction (L2)
-- [ ] GPU ray tracing for multipath
-- [ ] Time-series animation
-- [ ] Real-time weather integration
+- [ ] TLE 轨道传播作为默认卫星定位方式
+- [ ] 完整 ITU-R P.618 大气模型（含雨衰）
+- [ ] L2 地形层：DEM 加载、视线分析、刃形衍射（ITU-R P.526）
+- [ ] L3 城市层：建筑阴影计算（需 Shapefile 数据）、GPU 光线追踪多径
+- [ ] 时序动画生成
+- [ ] 实时气象数据集成
 
 ## Architecture
 

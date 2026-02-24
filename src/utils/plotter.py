@@ -20,6 +20,10 @@ def plot_radio_map(loss_map: np.ndarray,
                    vmax: Optional[float] = None,
                    cmap: str = 'viridis',
                    show_colorbar: bool = True,
+                   show_stats: bool = True,
+                   origin_lat: Optional[float] = None,
+                   origin_lon: Optional[float] = None,
+                   coverage_km: Optional[float] = None,
                    dpi: int = 150) -> None:
     """
     Plot a radio map as a 2D heatmap.
@@ -32,32 +36,62 @@ def plot_radio_map(loss_map: np.ndarray,
         vmax: Maximum value for colormap
         cmap: Colormap name
         show_colorbar: Whether to show colorbar
+        show_stats: Whether to overlay min/max/mean/std text box
+        origin_lat: Origin latitude (degrees) — enables geographic axis labels
+        origin_lon: Origin longitude (degrees) — enables geographic axis labels
+        coverage_km: Coverage width in km — enables geographic axis labels
         dpi: Output DPI for saved figure
     """
     fig, ax = plt.subplots(figsize=(10, 8))
 
-    # Plot heatmap
-    im = ax.imshow(loss_map, cmap=cmap, vmin=vmin, vmax=vmax,
+    valid = loss_map[~np.isnan(loss_map)]
+    auto_vmin = float(np.nanmin(loss_map)) if vmin is None else vmin
+    auto_vmax = float(np.nanmax(loss_map)) if vmax is None else vmax
+
+    im = ax.imshow(loss_map, cmap=cmap, vmin=auto_vmin, vmax=auto_vmax,
                    origin='upper', interpolation='nearest')
 
-    # Add colorbar
     if show_colorbar:
         cbar = plt.colorbar(im, ax=ax)
         cbar.set_label('Loss (dB)', rotation=270, labelpad=20)
 
-    # Set title and labels
+    # Geographic axis ticks
+    if origin_lat is not None and origin_lon is not None and coverage_km is not None:
+        n = loss_map.shape[0]
+        lat_extent = coverage_km / 2.0 / 111.0
+        lon_extent = coverage_km / 2.0 / (111.0 * np.cos(np.radians(origin_lat)))
+
+        n_ticks = 5
+        lat_vals = np.linspace(origin_lat + lat_extent, origin_lat - lat_extent, n_ticks)
+        lon_vals = np.linspace(origin_lon - lon_extent, origin_lon + lon_extent, n_ticks)
+        tick_px = np.linspace(0, n - 1, n_ticks)
+
+        ax.set_xticks(tick_px)
+        ax.set_xticklabels([f"{v:.2f}°E" for v in lon_vals], fontsize=9)
+        ax.set_yticks(tick_px)
+        ax.set_yticklabels([f"{v:.2f}°N" for v in lat_vals], fontsize=9)
+        ax.set_xlabel('Longitude', fontsize=11)
+        ax.set_ylabel('Latitude', fontsize=11)
+    else:
+        ax.set_xlabel('Pixel X', fontsize=12)
+        ax.set_ylabel('Pixel Y', fontsize=12)
+
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.set_xlabel('Pixel X', fontsize=12)
-    ax.set_ylabel('Pixel Y', fontsize=12)
 
-    # Add grid
-    ax.grid(False)
+    # Stats overlay
+    if show_stats and len(valid) > 0:
+        stats_text = (f"mean={np.mean(valid):.2f} dB\n"
+                      f"std={np.std(valid):.2f} dB\n"
+                      f"min={np.min(valid):.2f} dB\n"
+                      f"max={np.max(valid):.2f} dB")
+        ax.text(0.02, 0.02, stats_text, transform=ax.transAxes, fontsize=8,
+                verticalalignment='bottom', fontfamily='monospace',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-    # Tight layout
     plt.tight_layout()
 
-    # Save or show
     if output_file:
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
         print(f"Saved radio map to {output_file}")
     else:

@@ -11,7 +11,7 @@ This module provides fundamental RF propagation formulas including:
 import numpy as np
 
 
-def free_space_path_loss(distance_km: float, frequency_ghz: float) -> float:
+def free_space_path_loss(distance_km, frequency_ghz):
     """
     Calculate Free Space Path Loss (FSPL).
 
@@ -19,89 +19,112 @@ def free_space_path_loss(distance_km: float, frequency_ghz: float) -> float:
     where d is in km and f is in GHz
 
     Args:
-        distance_km: Distance in kilometers
-        frequency_ghz: Frequency in GHz
+        distance_km: Distance in kilometers (scalar or ndarray)
+        frequency_ghz: Frequency in GHz (scalar or ndarray)
 
     Returns:
-        Path loss in dB
+        Path loss in dB (same shape as inputs)
     """
-    if distance_km <= 0 or frequency_ghz <= 0:
-        return 0.0
-
-    fspl_db = 20 * np.log10(distance_km) + 20 * np.log10(frequency_ghz) + 92.45
+    d = np.asarray(distance_km, dtype=float)
+    f = np.asarray(frequency_ghz, dtype=float)
+    safe_d = np.where(d > 0, d, np.nan)
+    safe_f = np.where(f > 0, f, np.nan)
+    fspl_db = 20 * np.log10(safe_d) + 20 * np.log10(safe_f) + 92.45
     return fspl_db
 
 
-def atmospheric_loss(elevation_angle_deg: float, frequency_ghz: float,
-                     rain_rate_mm_h: float = 0.0) -> float:
+def atmospheric_loss(elevation_angle_deg, frequency_ghz, rain_rate_mm_h=0.0):
     """
-    Calculate atmospheric attenuation based on ITU-R P.618.
+    Calculate atmospheric attenuation based on ITU-R P.618 (simplified).
 
-    This is a simplified model. For V1.0, we use basic atmospheric absorption.
-    For V2.0, this should be replaced with full ITU-R P.618 implementation.
+    Accepts scalars or numpy arrays.
 
     Args:
-        elevation_angle_deg: Elevation angle in degrees (0-90)
-        frequency_ghz: Frequency in GHz
-        rain_rate_mm_h: Rain rate in mm/hour (default 0 for clear sky)
+        elevation_angle_deg: Elevation angle in degrees (scalar or ndarray)
+        frequency_ghz: Frequency in GHz (scalar or ndarray)
+        rain_rate_mm_h: Rain rate in mm/hour (scalar or ndarray)
 
     Returns:
-        Atmospheric loss in dB
-
-    TODO: Implement full ITU-R P.618 model for V2.0
-    TODO: Add oxygen and water vapor absorption
-    TODO: Add rain attenuation model
+        Atmospheric loss in dB (same shape as inputs)
     """
-    if elevation_angle_deg <= 0:
-        return 999.0  # Below horizon
+    el = np.asarray(elevation_angle_deg, dtype=float)
+    freq = np.asarray(frequency_ghz, dtype=float)
+    rain = np.asarray(rain_rate_mm_h, dtype=float)
 
-    # Simplified clear-sky atmospheric absorption
-    # Typical values: 0.1-0.5 dB at L-band, higher at higher frequencies
-    zenith_attenuation = 0.1 * (frequency_ghz / 10.0)  # Rough approximation
+    # Clamp elevation to avoid division by zero; below 0 → large loss
+    el_safe = np.clip(el, 0.1, 90.0)
+    path_factor = 1.0 / np.sin(np.radians(el_safe))
 
-    # Path length factor (1/sin(elevation))
-    path_factor = 1.0 / np.sin(np.radians(elevation_angle_deg))
-
-    # Basic atmospheric loss
+    zenith_attenuation = 0.1 * (freq / 10.0)
     atm_loss = zenith_attenuation * path_factor
 
-    # Simple rain attenuation (placeholder)
-    if rain_rate_mm_h > 0:
-        # Simplified rain attenuation: ~0.1 dB/km at 10 GHz for 1 mm/h
-        rain_coeff = 0.01 * (frequency_ghz / 10.0) ** 2
-        rain_loss = rain_coeff * rain_rate_mm_h * path_factor
-        atm_loss += rain_loss
+    # Simple rain attenuation
+    rain_coeff = 0.01 * (freq / 10.0) ** 2
+    atm_loss = atm_loss + rain_coeff * rain * path_factor
 
+    # Mark below-horizon pixels
+    atm_loss = np.where(el <= 0, 999.0, atm_loss)
     return atm_loss
 
 
-def ionospheric_loss(frequency_ghz: float, tec: float = 10.0) -> float:
+def atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2):
+    """
+    Improved atmospheric attenuation using ERA5 Integrated Water Vapor.
+
+    Uses ITU-R P.836 approximation for wet zenith delay at 10 GHz:
+      wet zenith  ≈ 0.0173 * IWV  dB
+      dry zenith  ≈ 0.046 dB  (standard atmosphere)
+    Path loss = zenith_total / sin(elevation)
+
+    Accepts scalars or numpy arrays.
+
+    Args:
+        elevation_angle_deg: Elevation angle in degrees (scalar or ndarray)
+        frequency_ghz: Frequency in GHz (scalar or ndarray)
+        iwv_kg_m2: Integrated Water Vapor in kg/m² (scalar or ndarray)
+
+    Returns:
+        Atmospheric loss in dB (same shape as inputs)
+    """
+    el = np.asarray(elevation_angle_deg, dtype=float)
+    freq = np.asarray(frequency_ghz, dtype=float)
+    iwv = np.asarray(iwv_kg_m2, dtype=float)
+
+    el_safe = np.clip(el, 5.0, 90.0)
+    sin_el = np.sin(np.radians(el_safe))
+
+    # Scale dry/wet zenith with frequency (relative to 10 GHz reference)
+    freq_scale = (freq / 10.0)
+    dry_zenith = 0.046 * freq_scale
+    wet_zenith = 0.0173 * iwv * freq_scale
+
+    atm_loss = (dry_zenith + wet_zenith) / sin_el
+    atm_loss = np.where(el <= 0, 999.0, atm_loss)
+    return atm_loss
+
+
+def ionospheric_loss(frequency_ghz, tec=10.0):
     """
     Calculate ionospheric effects based on ITU-R P.531.
 
-    The ionosphere primarily causes phase delay and scintillation.
-    Effects decrease with frequency squared.
+    Effects decrease with frequency squared; negligible above ~3 GHz.
+    Accepts scalars or numpy arrays.
 
     Args:
-        frequency_ghz: Frequency in GHz
-        tec: Total Electron Content in TECU (1 TECU = 10^16 electrons/m^2)
-             Typical values: 5-50 TECU
+        frequency_ghz: Frequency in GHz (scalar or ndarray)
+        tec: Total Electron Content in TECU (scalar or ndarray, default 10.0)
 
     Returns:
-        Ionospheric loss in dB
-
-    TODO: Implement full ITU-R P.531 model for V2.0
-    TODO: Add scintillation effects
-    TODO: Add Faraday rotation
+        Ionospheric loss in dB (same shape as inputs)
     """
-    # Ionospheric effects are negligible above ~3 GHz
-    if frequency_ghz > 3.0:
-        return 0.0
+    freq = np.asarray(frequency_ghz, dtype=float)
+    tec_arr = np.asarray(tec, dtype=float)
 
-    # Simplified model: loss proportional to TEC and inversely to f^2
-    # This is a placeholder - actual ionospheric effects are complex
-    iono_loss = 0.1 * tec / (frequency_ghz ** 2)
-
+    iono_loss = np.where(
+        freq > 3.0,
+        0.0,
+        0.1 * tec_arr / np.where(freq > 0, freq ** 2, 1.0)
+    )
     return iono_loss
 
 

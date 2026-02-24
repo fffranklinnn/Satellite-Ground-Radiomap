@@ -28,9 +28,9 @@ satellite:
 
 # Time parameters
 time:
-  start: "2024-01-01T00:00:00"  # Simulation start time (ISO format)
-  end: "2024-01-01T23:00:00"    # Simulation end time
-  step_hours: 1                 # Time step in hours
+  start: "2025-01-01T00:00:00"  # Simulation start time (ISO format)
+  end: "2025-01-01T23:00:00"    # Simulation end time
+  step_hours: 6                 # Time step in hours
   timezone: "UTC"               # Timezone
 
 # Layer configurations
@@ -47,7 +47,11 @@ layers:
     # Atmospheric parameters
     rain_rate_mm_h: 0.0         # Rain rate (0 for clear sky)
     # Ionospheric parameters
-    tec: 10.0                   # Total Electron Content (TECU)
+    tec: 10.0                   # Fallback TEC in TECU (used when ionex_file is absent)
+    # Real data sources (2025-01-01)
+    ionex_file: "data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
+    era5_file: "data/l1_space/data/data_stream-oper_stepType-instant.nc"   # optional; graceful fallback if absent
+    tle_file: "data/2025_0101.tle"   # Starlink constellation TLE for 2025-01-01
 
   # L2: Terrain Layer (25.6 km coverage, 100 m/pixel)
   l2_topo:
@@ -60,7 +64,7 @@ layers:
 
   # L3: Urban Layer (256 m coverage, 1 m/pixel)
   l3_urban:
-    enabled: true
+    enabled: false
     grid_size: 256
     coverage_km: 0.256
     resolution_m: 1.0

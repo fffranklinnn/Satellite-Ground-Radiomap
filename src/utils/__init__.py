@@ -2,6 +2,7 @@
 
 from .ionex_loader import IonexLoader
 from .era5_loader import load_era5, Era5Loader
+from .tle_loader import TleLoader
 from .logger import setup_logger, get_logger, SimulationLogger
 from .plotter import (
     plot_radio_map,
@@ -19,6 +20,9 @@ from .performance import (
 )
 
 __all__ = [
+    'IonexLoader',
+    'Era5Loader',
+    'TleLoader',
     'setup_logger',
     'get_logger',
     'SimulationLogger',

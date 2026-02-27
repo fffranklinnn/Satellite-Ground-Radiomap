@@ -6,9 +6,14 @@ This module provides fundamental RF propagation formulas including:
 - Atmospheric attenuation (ITU-R P.618)
 - Ionospheric effects (ITU-R P.531)
 - Polarization loss
+- Phased array antenna gain (merged from branch_L1)
 """
 
 import numpy as np
+
+# ── Physical constants (merged from branch_L1) ────────────────────────────────
+SPEED_OF_LIGHT = 2.998e8       # m/s
+BOLTZMANN_K    = 1.380649e-23  # J/K
 
 
 def free_space_path_loss(distance_km, frequency_ghz):
@@ -186,3 +191,123 @@ def combine_losses_db(*losses_db: float) -> float:
         Total loss in dB (sum of all losses)
     """
     return sum(losses_db)
+
+
+# ── Branch-L1 antenna / link-budget functions ─────────────────────────────────
+# Reference: ITU-R P.618, Remote Sensing paper (You Fu et al., 2026)
+# Ku-band 14.5 GHz, 31×31 rectangular phased array
+
+def fspl_db(slant_range_m: np.ndarray, freq_hz: float) -> np.ndarray:
+    """
+    Free Space Path Loss (meter / Hz variant).
+
+    FSPL(dB) = 20·log10(4π·d·f / c)
+
+    Args:
+        slant_range_m: Slant range in meters (scalar or ndarray)
+        freq_hz:       Carrier frequency in Hz
+
+    Returns:
+        Path loss in dB (same shape as slant_range_m)
+    """
+    d = np.maximum(np.asarray(slant_range_m, dtype=float), 1.0)
+    return 20.0 * np.log10(4.0 * np.pi * d * freq_hz / SPEED_OF_LIGHT)
+
+
+def polarization_loss_db(pol_mismatch_angle_deg: float = 0.0) -> float:
+    """
+    Polarization Loss Factor (PLF).
+
+    PLF(dB) = -20·log10|cos(Δψ)|
+    Same polarization (Δψ=0) → 0 dB loss.
+
+    Args:
+        pol_mismatch_angle_deg: Polarization mismatch angle in degrees
+
+    Returns:
+        Polarization loss in dB (positive value)
+    """
+    angle_rad = np.deg2rad(pol_mismatch_angle_deg)
+    cos_val = max(abs(float(np.cos(angle_rad))), 1e-10)
+    return float(-20.0 * np.log10(cos_val))
+
+
+def gaussian_beam_gain_db(theta_az_deg: np.ndarray,
+                          theta_el_deg: np.ndarray,
+                          peak_gain_db: float,
+                          hpbw_az_deg: float,
+                          hpbw_el_deg: float) -> np.ndarray:
+    """
+    2-D Gaussian beam antenna gain model.
+
+    G(θ_az, θ_el) = G_peak - 12·[(θ_az/HPBW_az)² + (θ_el/HPBW_el)²]  (dB)
+
+    Args:
+        theta_az_deg: Azimuth offset from boresight in degrees (ndarray)
+        theta_el_deg: Elevation offset from boresight in degrees (ndarray)
+        peak_gain_db: Peak gain in dBi
+        hpbw_az_deg:  Azimuth half-power beam width in degrees
+        hpbw_el_deg:  Elevation half-power beam width in degrees
+
+    Returns:
+        Antenna gain array in dBi (same shape as theta_az_deg)
+    """
+    return peak_gain_db - 12.0 * (
+        (theta_az_deg / hpbw_az_deg) ** 2 +
+        (theta_el_deg / hpbw_el_deg) ** 2
+    )
+
+
+def phased_array_peak_gain_db(n_elements: int,
+                               element_gain_db: float = 5.0) -> float:
+    """
+    Estimate peak gain of a phased array antenna.
+
+    G_peak(dB) = 10·log10(N) + G_element(dBi)
+
+    Args:
+        n_elements:     Total number of array elements (e.g. 31×31 = 961)
+        element_gain_db: Single element gain in dBi (default 5 dBi)
+
+    Returns:
+        Peak array gain in dBi
+    """
+    return float(10.0 * np.log10(n_elements) + element_gain_db)
+
+
+def phased_array_hpbw_deg(n_row: int, n_col: int,
+                           wavelength_m: float,
+                           element_spacing_m: float) -> tuple:
+    """
+    Estimate HPBW of a rectangular phased array (uniform excitation).
+
+    HPBW ≈ 0.886 · λ / (N · d)  [radians] → converted to degrees
+
+    Args:
+        n_row:              Number of rows
+        n_col:              Number of columns
+        wavelength_m:       Operating wavelength in meters
+        element_spacing_m:  Element spacing in meters (typically λ/2)
+
+    Returns:
+        Tuple (hpbw_az_deg, hpbw_el_deg)
+    """
+    hpbw_az = np.rad2deg(0.886 * wavelength_m / (n_col * element_spacing_m))
+    hpbw_el = np.rad2deg(0.886 * wavelength_m / (n_row * element_spacing_m))
+    return float(hpbw_az), float(hpbw_el)
+
+
+def thermal_noise_power_dbw(bandwidth_hz: float,
+                             temp_k: float = 290.0) -> float:
+    """
+    Thermal noise power  Pn = k·T·B.
+
+    Args:
+        bandwidth_hz: System bandwidth in Hz
+        temp_k:       System noise temperature in K (default 290 K per ITU)
+
+    Returns:
+        Thermal noise power in dBW
+    """
+    pn_w = BOLTZMANN_K * temp_k * bandwidth_hz
+    return float(10.0 * np.log10(pn_w))

@@ -3,223 +3,135 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A multi-scale electromagnetic mapping simulation system for satellite-to-ground radio propagation analysis.
+[中文版 README](README_CN.md)
+
+A multi-scale electromagnetic loss mapping system for satellite-to-ground radio propagation analysis.
 
 ## Overview
 
-SG-MRM (Satellite-Ground Multiscale Radio Map) is a Python-based simulation framework that generates high-resolution electromagnetic loss maps by combining three physical layers:
+SG-MRM generates high-resolution electromagnetic loss maps by combining three physical layers:
 
-- **L1 Macro Layer** (256 km coverage, 1000 m/pixel): Satellite positioning, atmospheric effects, ionospheric effects
-- **L2 Terrain Layer** (25.6 km coverage, 100 m/pixel): DEM-based terrain obstruction
-- **L3 Urban Layer** (256 m coverage, 1 m/pixel): Building distribution, shadows, ray tracing
+- **L1 Macro Layer** (256 km, 1000 m/px): TLE orbit propagation, FSPL, 31×31 phased-array antenna gain, atmospheric attenuation (ERA5 IWV), ionospheric effects (IONEX TEC)
+- **L2 Terrain Layer** (25.6 km, 100 m/px): GeoTIFF DEM loading & resampling, vectorized cumulative-max LOS occlusion, diffraction loss
+- **L3 Urban Layer** (256 m, 1 m/px): Building height raster tile cache, directional NLoS scan, occlusion/occupancy loss
 
-Each layer outputs a standardized 256×256 pixel image representing electromagnetic loss in dB, which are combined using a tile-stacking approach.
+Each layer outputs a 256×256 float32 loss matrix in dB, combined via dB-domain summation:
 
-## Features
-
-- **Multi-scale Architecture**: Three-layer system covering macro, terrain, and micro scales
-- **Standardized Interface**: All layers implement a common `.compute()` interface
-- **Modular Design**: High cohesion, low coupling between layers
-- **Time-Series Support**: Generate dynamic radio maps over time
-- **Visualization Tools**: Built-in plotting and animation capabilities
-- **Extensible**: Easy to add new physical models and data sources
+```
+Composite Loss (dB) = Interp(L1) + Interp(L2) + L3
+```
 
 ## Installation
-
-### Prerequisites
-
-- Python 3.8 or higher
-- pip package manager
-
-### Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Development Installation
-
-For development with editable install:
-
-```bash
-pip install -e .
-```
+Key dependencies: numpy, scipy, matplotlib, pyyaml, skyfield, rasterio, geopandas, shapely, pyproj, pyarrow, pandas
 
 ## Quick Start
 
-### Basic Usage
-
-```python
-from datetime import datetime
-from src.layers import L1MacroLayer, L3UrbanLayer
-from src.engine import RadioMapAggregator
-from src.utils import plot_radio_map
-
-# Define origin
-origin_lat, origin_lon = 39.9042, 116.4074
-
-# Configure L1 layer
-l1_config = {
-    'grid_size': 256,
-    'coverage_km': 256.0,
-    'resolution_m': 1000.0,
-    'frequency_ghz': 10.0,
-    'satellite_altitude_km': 550.0
-}
-
-# Initialize layers
-l1_layer = L1MacroLayer(l1_config, origin_lat, origin_lon)
-
-# Create aggregator
-aggregator = RadioMapAggregator(l1_layer=l1_layer)
-
-# Compute radio map
-timestamp = datetime(2024, 1, 1, 12, 0, 0)
-radio_map = aggregator.aggregate(timestamp)
-
-# Visualize
-plot_radio_map(radio_map, title="Radio Map", output_file="output.png")
-```
-
-### Using Configuration File
+### Run full simulation
 
 ```bash
 python main.py --config configs/mission_config.yaml --output output/
 ```
 
-### Run Examples
+### Programmatic API
+
+```python
+from datetime import datetime
+from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
+from src.engine import RadioMapAggregator
+from src.layers.base import LayerContext
+import yaml
+
+config = yaml.safe_load(open('configs/mission_config.yaml'))
+lat, lon = config['origin']['latitude'], config['origin']['longitude']
+
+l1 = L1MacroLayer(config['layers']['l1_macro'], lat, lon)
+l2 = L2TopoLayer(config['layers']['l2_topo'], lat, lon)
+l3 = L3UrbanLayer(config['layers']['l3_urban'], lat, lon)
+
+agg = RadioMapAggregator(l1, l2, l3)
+ctx = LayerContext.from_any({'incident_dir': config['layers']['l3_urban']['incident_dir']})
+composite = agg.aggregate(lat, lon, timestamp=datetime(2025, 1, 1, 6, 0, 0), context=ctx)
+# composite: (256, 256) float32, dB
+```
+
+### Visualization scripts
 
 ```bash
-# Basic usage example
-python examples/basic_usage.py
-
-# V1.0 static link example
-python examples/v1_static_link.py
+python scripts/generate_l1_map.py              # L1 hourly + parameter sweeps
+python scripts/generate_global_comparison.py    # 6-city global comparison
+python scripts/generate_global_map.py           # Global loss map (720×360)
 ```
 
 ## Project Structure
 
 ```
 Satellite-Ground-Radiomap/
-├── configs/              # Configuration files
-├── data/                 # Data sources (TLE, DEM, shapefiles)
+├── configs/              # Simulation config (YAML)
+├── data/
+│   ├── 2025_0101.tle     # Starlink TLE orbit data
+│   ├── l1_space/data/    # IONEX TEC + ERA5 atmospheric data
+│   ├── l2_topo/          # National DEM GeoTIFF
+│   └── l3_urban/         # Building tile cache (H.npy/Occ.npy)
 ├── src/
-│   ├── core/            # Grid system and physics utilities
-│   ├── layers/          # L1/L2/L3 layer implementations
-│   ├── engine/          # Aggregation engine
-│   └── utils/           # Logging, plotting, performance tools
-├── tests/               # Unit tests
-├── examples/            # Usage examples
-├── docs/                # Documentation
-└── main.py              # Main entry point
+│   ├── core/             # Grid coordinate system + RF physics
+│   ├── layers/           # L1/L2/L3 layer implementations
+│   ├── engine/           # Multi-layer aggregation engine
+│   └── utils/            # Data loaders, plotting, profiling
+├── tools/                # L3 tile cache build tools
+├── scripts/              # Visualization & batch generation
+├── tests/                # Unit tests
+├── examples/             # Usage examples
+├── docs/                 # Architecture docs
+└── main.py               # Entry point
 ```
 
-## Development Roadmap
+## Current Data (Xi'an, Shaanxi)
 
-### V1.0: L1 Macro Layer (Current) ✓
+| Data | File | Description |
+|------|------|-------------|
+| TLE | `data/2025_0101.tle` | Starlink constellation, 14918 sats (2025-01-01) |
+| IONEX | `data/l1_space/data/*.INX.gz` | UPC GIM global TEC (15 min interval) |
+| ERA5 | `data/l1_space/data/*.nc` | ECMWF pressure-level data (z/r/q/t) |
+| DEM | `data/l2_topo/全国DEM数据.tif` | National DEM (~30 m resolution) |
+| Buildings | `data/l3_urban/xian/tiles_60/` | Xi'an urban core, 1320 tiles (256 m, 1 m/px) |
 
-- [x] L1 宏观层完整实现：FSPL、大气衰减（ITU-R P.618 简化 + ERA5 IWV 增强）、电离层效应（ITU-R P.531 + IONEX 实测 TEC）
-- [x] 卫星位置：固定天顶方向（TLE 加载器已集成，动态定位为 V2.0 默认路径）
-- [x] 多层聚合引擎（dB 域叠加 + 双三次插值）
-- [x] 数据加载器：IONEX、ERA5 NetCDF、TLE
-- [x] 可视化工具：静态图、时序图、动画帧导出
-- [x] 49+ 单元测试
-- [ ] L2 地形层：占位实现，始终返回零损耗
-- [ ] L3 城市层：占位实现，无建筑数据时返回零损耗
+## Roadmap
 
-### V2.0: Full Dynamic Simulation (Planned)
+### V1.0 (Current) ✓
 
-- [ ] TLE 轨道传播作为默认卫星定位方式
-- [ ] 完整 ITU-R P.618 大气模型（含雨衰）
-- [ ] L2 地形层：DEM 加载、视线分析、刃形衍射（ITU-R P.526）
-- [ ] L3 城市层：建筑阴影计算（需 Shapefile 数据）、GPU 光线追踪多径
-- [ ] 时序动画生成
-- [ ] 实时气象数据集成
+- [x] L1: TLE satellite selection + FSPL + phased-array gain + atmospheric/ionospheric loss
+- [x] L2: GeoTIFF DEM loading + vectorized LOS occlusion + diffraction loss
+- [x] L3: Tile cache building raster + directional NLoS scan + occlusion/occupancy loss
+- [x] Multi-layer aggregation engine (dB-domain summation + bilinear interpolation)
+- [x] Data loaders: IONEX, ERA5, TLE
+- [x] Visualization tools + unit tests
 
-## Architecture
+### V2.0 (Planned)
 
-### Three-Layer Design
-
-The system follows a "tile stacking" architecture where each layer operates independently:
-
-1. **L1 Macro Layer**: Computes wide-area satellite coverage including free space path loss, atmospheric attenuation, and ionospheric effects
-
-2. **L2 Terrain Layer**: Processes DEM data to calculate terrain-induced obstructions and diffraction losses
-
-3. **L3 Urban Layer**: Analyzes building distributions for shadow casting and multipath effects
-
-### Aggregation Formula
-
-```
-Composite Loss (dB) = L1 + Interpolate(L2) + L3
-```
-
-Losses are combined in the dB domain (logarithmic addition).
-
-## Configuration
-
-Edit `configs/mission_config.yaml` to customize:
-
-- Geographic origin (latitude, longitude)
-- RF parameters (frequency, power, polarization)
-- Satellite parameters (altitude, TLE file)
-- Time range and resolution
-- Layer enable/disable flags
-- Output format and visualization settings
+- [ ] ITU-R P.526 Fresnel-Kirchhoff knife-edge diffraction (L2)
+- [ ] GPU ray tracing for multipath (L3)
+- [ ] Full ITU-R P.618 rain attenuation model
+- [ ] Time-series animation generation
+- [ ] Parallel computation support
 
 ## Testing
 
-Run unit tests:
-
 ```bash
 pytest tests/
-```
-
-Run with coverage:
-
-```bash
 pytest --cov=src tests/
 ```
 
 ## Documentation
 
 - [Architecture Guide](docs/architecture.md)
-- [API Reference](docs/api_reference.md)
-- [Development Guide](docs/development_guide.md)
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+- [Quick Start](docs/QUICKSTART.md)
+- [中文版 README](README_CN.md)
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Citation
-
-If you use this software in your research, please cite:
-
-```bibtex
-@software{sg_mrm_2024,
-  title = {SG-MRM: Satellite-Ground Multiscale Radio Map},
-  author = {SG-MRM Development Team},
-  year = {2024},
-  url = {https://github.com/yourusername/SG-RM}
-}
-```
-
-## Contact
-
-For questions and support, please open an issue on GitHub.
-
-## Acknowledgments
-
-- ITU-R recommendations for propagation models
-- Open-source geospatial data providers
-- Python scientific computing community
+MIT License - see [LICENSE](LICENSE)

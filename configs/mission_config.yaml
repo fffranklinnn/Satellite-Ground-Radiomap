@@ -8,13 +8,13 @@ mission:
 
 # Geographic origin (center point of simulation)
 origin:
-  latitude: 39.9042    # Beijing example (degrees)
-  longitude: 116.4074  # Beijing example (degrees)
-  altitude_m: 50.0     # Ground altitude above sea level
+  latitude: 34.3416    # Xi'an, Shaanxi Province (degrees)
+  longitude: 108.9398  # Xi'an, Shaanxi Province (degrees)
+  altitude_m: 397.0    # Ground altitude above sea level
 
 # RF parameters
 rf:
-  frequency_ghz: 10.0           # Operating frequency in GHz
+  frequency_ghz: 14.5           # Operating frequency in GHz (Ku-band, matches L1 antenna design)
   tx_power_dbm: 40.0            # Transmit power in dBm
   tx_polarization: "RHCP"       # Transmit polarization (H/V/RHCP/LHCP)
   rx_polarization: "RHCP"       # Receive polarization
@@ -41,7 +41,7 @@ layers:
     grid_size: 256
     coverage_km: 256.0
     resolution_m: 1000.0
-    frequency_ghz: 10.0
+    frequency_ghz: 14.5
     satellite_altitude_km: 550.0
     tle_file: null
     # Atmospheric parameters
@@ -55,22 +55,27 @@ layers:
 
   # L2: Terrain Layer (25.6 km coverage, 100 m/pixel)
   l2_topo:
-    enabled: false              # Disabled for V1.0
+    enabled: true
     grid_size: 256
     coverage_km: 25.6
     resolution_m: 100.0
-    dem_file: null              # Path to DEM file (.tif or .hgt)
+    dem_file: "data/l2_topo/全国DEM数据.tif"
+    frequency_ghz: 14.5         # Match L1 Ku-band frequency
     satellite_elevation_deg: 45.0
+    satellite_azimuth_deg: 180.0
 
   # L3: Urban Layer (256 m coverage, 1 m/pixel)
   l3_urban:
-    enabled: false
+    enabled: true
     grid_size: 256
     coverage_km: 0.256
     resolution_m: 1.0
-    building_shapefile: null    # Path to building shapefile (.shp)
-    satellite_azimuth_deg: 180.0
-    satellite_elevation_deg: 45.0
+    tile_cache_root: "data/l3_urban/xian/tiles_60"   # Path to tile cache directory
+    nlos_loss_db: 20.0          # Loss applied to NLoS pixels
+    occ_loss_db: 30.0           # Loss applied to building-occupied pixels
+    incident_dir:               # Default incident direction (overridden per-call if needed)
+      az_deg: 180.0             # Azimuth: 180 = from south (satellite in south)
+      el_deg: 45.0              # Elevation angle in degrees
 
 # Output configuration
 output:

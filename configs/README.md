@@ -1,70 +1,46 @@
 # Configuration Directory
 
-This directory contains configuration files for the SG-MRM simulation system.
+SG-MRM 仿真配置文件目录。
 
-## Files
+## `mission_config.yaml`
 
-### mission_config.yaml
+主配置文件，定义所有仿真参数：
 
-The main configuration file that defines all simulation parameters:
+| 配置段 | 说明 |
+|--------|------|
+| `origin` | 仿真中心坐标（当前：西安 34.3416°N, 108.9398°E） |
+| `rf` | 射频参数：频率 14.5 GHz (Ku-band)、发射功率、极化 |
+| `time` | 仿真时间范围与步长 |
+| `layers.l1_macro` | L1 宏观层：TLE 文件、IONEX/ERA5 数据路径 |
+| `layers.l2_topo` | L2 地形层：DEM 文件路径、卫星仰角/方位角 |
+| `layers.l3_urban` | L3 城市层：tile cache 路径、NLoS/占用损耗、入射方向 |
+| `output` | 输出目录、格式、DPI |
+| `performance` | 性能分析开关 |
+| `logging` | 日志级别与文件 |
 
-- **Mission metadata**: Name, description, version
-- **Geographic origin**: Latitude, longitude, altitude
-- **RF parameters**: Frequency, transmit power, polarization
-- **Satellite parameters**: Altitude, TLE file path
-- **Time parameters**: Start/end time, time step
-- **Layer configurations**: Settings for L1/L2/L3 layers
-- **Output configuration**: Output directory, format, visualization settings
-- **Performance settings**: Profiling, parallel processing
-- **Logging configuration**: Log level, log file
-
-## Usage
-
-Load the configuration in your Python code:
-
-```python
-import yaml
-
-with open('configs/mission_config.yaml', 'r') as f:
-    config = yaml.safe_load(f)
-
-# Access configuration values
-origin_lat = config['origin']['latitude']
-frequency = config['rf']['frequency_ghz']
-```
-
-## Customization
-
-To create a custom configuration:
-
-1. Copy `mission_config.yaml` to a new file (e.g., `my_mission.yaml`)
-2. Modify the parameters as needed
-3. Run the simulation with your custom config:
+## 使用
 
 ```bash
-python main.py --config configs/my_mission.yaml
+# 使用默认配置
+python main.py
+
+# 指定配置文件
+python main.py --config configs/mission_config.yaml --output output/
+
+# 自定义配置
+cp configs/mission_config.yaml configs/my_config.yaml
+# 编辑 my_config.yaml 后运行
+python main.py --config configs/my_config.yaml
 ```
 
-## Layer Configuration
+## 各层启用/禁用
 
-Each layer (L1/L2/L3) has specific parameters:
-
-### L1 Macro Layer
-- Coverage: 256 km × 256 km
-- Resolution: 1000 m/pixel
-- Handles: Satellite positioning, atmospheric effects, ionospheric effects
-
-### L2 Terrain Layer
-- Coverage: 25.6 km × 25.6 km
-- Resolution: 100 m/pixel
-- Handles: DEM data, terrain obstruction
-
-### L3 Urban Layer
-- Coverage: 256 m × 256 m
-- Resolution: 1 m/pixel
-- Handles: Building distribution, shadows, ray tracing
-
-## Version Notes
-
-- **V1.0**: L1 fully enabled with real IONEX/ERA5/TLE data; L2 and L3 return zero loss (placeholders)
-- **V2.0**: All layers enabled with full physics models (DEM terrain, building shapefiles, GPU ray tracing)
+```yaml
+layers:
+  l1_macro:
+    enabled: true    # TLE 文件为必需依赖
+  l2_topo:
+    enabled: true    # 无 DEM 文件时自动返回零损耗
+  l3_urban:
+    enabled: true    # 需要预构建 tile cache
+```

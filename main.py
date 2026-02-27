@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
 from src.engine import RadioMapAggregator
+from src.layers.base import LayerContext
 from src.utils import setup_logger, SimulationLogger, plot_radio_map, plot_layer_comparison
 from src.utils import get_profiler
 
@@ -108,6 +109,15 @@ def run_simulation(config: dict, output_dir: Path):
     step_hours = config['time']['step_hours']
     time_step = timedelta(hours=step_hours)
 
+    # Origin coordinates
+    origin_lat = config['origin']['latitude']
+    origin_lon = config['origin']['longitude']
+
+    # Build LayerContext from config (incident_dir for L3)
+    l3_cfg = config['layers'].get('l3_urban', {})
+    incident_dir_cfg = l3_cfg.get('incident_dir')
+    context = LayerContext.from_any({'incident_dir': incident_dir_cfg}) if incident_dir_cfg else None
+
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir}")
@@ -123,12 +133,12 @@ def run_simulation(config: dict, output_dir: Path):
 
         # Compute composite radio map
         sim_logger.log_layer_start("Aggregator", current_time)
-        composite_map = aggregator.aggregate(current_time)
+        composite_map = aggregator.aggregate(origin_lat, origin_lon, current_time, context)
         sim_logger.log_layer_end("Aggregator")
 
         # Get individual layer contributions
         if config['output']['save_individual_layers']:
-            contributions = aggregator.get_layer_contributions(current_time)
+            contributions = aggregator.get_layer_contributions(origin_lat, origin_lon, current_time, context)
 
             # Save individual layers
             if l1_layer and 'l1' in contributions:

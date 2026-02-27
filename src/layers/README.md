@@ -4,89 +4,93 @@
 
 ## 层级概览
 
-| 层 | 类 | 覆盖范围 | 分辨率 | 网格 | V1.0 状态 |
-|----|----|---------|--------|------|-----------|
+| 层 | 类 | 覆盖范围 | 分辨率 | 网格 | 状态 |
+|----|----|---------|--------|------|------|
 | L1 宏观层 | `L1MacroLayer` | 256 km × 256 km | 1000 m/pixel | 256×256 | ✅ 完整实现 |
-| L2 地形层 | `L2TopoLayer` | 25.6 km × 25.6 km | 100 m/pixel | 256×256 | ⏳ 占位（零损耗） |
-| L3 城市层 | `L3UrbanLayer` | 256 m × 256 m | 1 m/pixel | 256×256 | ⏳ 占位（零损耗） |
+| L2 地形层 | `L2TopoLayer` | 25.6 km × 25.6 km | 100 m/pixel | 256×256 | ✅ 完整实现 |
+| L3 城市层 | `L3UrbanLayer` | 256 m × 256 m | 1 m/pixel | 256×256 | ✅ 完整实现 |
 
 ---
 
-## 接口规范
+## 统一接口
 
 所有层继承 `BaseLayer`，实现统一接口：
 
 ```python
-def compute(self, timestamp: datetime) -> np.ndarray:
-    """
-    返回 256×256 的损耗数组，单位 dB。
-    值越大表示损耗越高（信号越弱）。
-    """
+def compute(self, origin_lat=None, origin_lon=None,
+            timestamp=None, context=None, **kwargs) -> np.ndarray:
+    """返回 256×256 float32 损耗数组，单位 dB。"""
 ```
 
-构造函数签名：
-
-```python
-Layer(config: dict, origin_lat: float, origin_lon: float)
-```
+构造函数：`Layer(config: dict, origin_lat: float, origin_lon: float)`
 
 ---
 
-## L1 宏观层（`l1_macro.py`）
+## L1 宏观层 (`l1_macro.py`)
 
-计算卫星到地面的宽域电磁损耗，完全向量化。
+卫星到地面的宽域电磁损耗，基于 Skyfield TLE 轨道传播。
 
 **计算内容：**
+- TLE 选星：遍历星座选择最高仰角卫星
 - 自由空间路径损耗（FSPL）
-- 大气衰减：有 ERA5 数据时用 `atmospheric_loss_era5()`，否则用简化模型
-- 电离层损耗：有 IONEX 数据时用实测 TEC，否则用默认值 10 TECU
-- 卫星几何：V1.0 固定天顶方向；TLE 加载器已集成，V2.0 启用动态定位
+- 31×31 相控阵天线增益（高斯波束模型）
+- 极化失配损耗
+- 仰角 < 5° 的像素标记为无覆盖 (200 dB)
 
-**配置参数：**
+**数据依赖：**
+- `data/2025_0101.tle` — Starlink TLE（必需）
+- `data/l1_space/data/*.INX.gz` — IONEX TEC（可选，回退到默认 10 TECU）
+- `data/l1_space/data/*.nc` — ERA5 IWV（可选，回退到简化大气模型）
 
+---
+
+## L2 地形层 (`l2_topo.py`)
+
+DEM 地形遮挡与衍射损耗，基于 rasterio 窗口读取。
+
+**计算内容：**
+- GeoTIFF DEM 窗口读取 + 双线性重采样（30m → 100m/px）
+- 向量化累积最大值 LOS 遮挡分析（纯 numpy，无 Python 循环）
+- 遮挡像素固定 20 dB 衍射损耗（V2.0: ITU-R P.526）
+
+**数据依赖：**
+- `data/l2_topo/全国DEM数据.tif` — 全国 DEM（15~57°N, 73~139°E）
+
+**配置：**
 ```yaml
-frequency_ghz: 10.0
-satellite_altitude_km: 550.0
-ionex_file: data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz  # 可选
-era5_file: data/l1_space/data/data_stream-oper_stepType-instant.nc          # 可选
-tle_file: data/2025_0101.tle                                                 # 可选
+l2_topo:
+  enabled: true
+  dem_file: "data/l2_topo/全国DEM数据.tif"
+  satellite_elevation_deg: 45.0
+  satellite_azimuth_deg: 180.0
 ```
 
 ---
 
-## L2 地形层（`l2_topo.py`）— V2.0 待实现
+## L3 城市层 (`l3_urban.py`)
 
-**V1.0**：无 DEM 数据时始终返回零损耗数组。
+建筑尺度 NLoS 遮挡损耗，基于预构建的 tile cache。
 
-**V2.0 规划：**
-- 加载 GeoTIFF / SRTM HGT 格式 DEM 数据
-- 视线（LOS）分析：逐像素检查卫星方向是否被地形遮挡
-- 刃形衍射损耗（ITU-R P.526）
+**计算内容：**
+- 从 tile cache 加载建筑高度栅格 (H.npy) 和占用掩码 (Occ.npy)
+- 方向性 NLoS 扫描（平行波假设，按入射方向逐射线扫描）
+- NLoS 像素 20 dB + 建筑占用像素 30 dB 损耗
 
-**配置参数：**
+**数据依赖：**
+- `data/l3_urban/xian/tiles_60/` — tile cache（由 `tools/build_l3_tile_cache.py` 构建）
 
-```yaml
-dem_file: data/l2_topo/N39E116.hgt   # V2.0 需要
-satellite_elevation_deg: 45.0
-```
+**Tile cache 构建流程：**
+```bash
+# 1. 预处理建筑 shapefile → parquet
+python tools/preprocess_buildings_catalog.py \
+  --input-root data/l3_urban/shanxisheng/ \
+  --output data/l3_urban/xian/catalog/buildings_xian.parquet
 
----
-
-## L3 城市层（`l3_urban.py`）— V2.0 待实现
-
-**V1.0**：无建筑数据时始终返回零损耗数组。
-
-**V2.0 规划：**
-- 从 Shapefile 加载建筑轮廓和高度
-- 建筑阴影计算（基于卫星方位角/仰角）
-- GPU 光线追踪多径效应
-
-**配置参数：**
-
-```yaml
-building_shapefile: data/l3_urban/buildings.shp   # V2.0 需要
-satellite_azimuth_deg: 180.0
-satellite_elevation_deg: 45.0
+# 2. 构建 tile cache
+python tools/build_l3_tile_cache.py \
+  --catalog data/l3_urban/xian/catalog/buildings_xian.parquet \
+  --tile-list data/l3_urban/xian/tile_list_xian_60.csv \
+  --output-root data/l3_urban/xian/tiles_60/
 ```
 
 ---
@@ -95,4 +99,5 @@ satellite_elevation_deg: 45.0
 
 ```python
 from src.layers import BaseLayer, L1MacroLayer, L2TopoLayer, L3UrbanLayer
+from src.layers.base import LayerContext
 ```

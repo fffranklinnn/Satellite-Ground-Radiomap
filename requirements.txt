@@ -6,36 +6,34 @@ scipy>=1.7.0
 matplotlib>=3.3.0
 pyyaml>=5.4.0
 
-# Geospatial data processing
-# Uncomment when needed for V2.0
-# gdal>=3.0.0
-# rasterio>=1.2.0
-# geopandas>=0.9.0
-# shapely>=1.7.0
-# pyproj>=3.0.0
+# Satellite orbit propagation (L1 — branch_L1 uses Skyfield)
+skyfield>=1.39
 
-# Satellite orbit propagation
-# Uncomment when needed for V2.0
-# skyfield>=1.39
+# Geospatial data processing (L2 DEM reading — branch_L2)
+rasterio>=1.2.0
+
+# Building data processing (L3 tools — branch_L3)
+geopandas>=0.9.0
+shapely>=1.7.0
+pyproj>=3.0.0
+pyarrow>=6.0.0      # Parquet catalog format used by L3 tools
+pandas>=1.3.0
+
+# Optional: legacy SGP4 propagator (kept for TleLoader utility)
 # sgp4>=2.20
 
-# Optional: For advanced visualization
-# cartopy>=0.19.0
-# folium>=0.12.0
+# Optional: ERA5 atmospheric data loading (L1 enhanced atmospheric model)
+# netCDF4>=1.5.0
+# xarray>=0.19.0
+
+# Optional: GDAL (only needed for advanced geospatial operations)
+# gdal>=3.0.0
 
 # Testing
 pytest>=6.2.0
 pytest-cov>=2.12.0
 
-# Development tools
+# Development tools (optional)
 # black>=21.0
 # flake8>=3.9.0
 # mypy>=0.900
-
-# Performance profiling
-# line_profiler>=3.3.0
-# memory_profiler>=0.58.0
-
-# Documentation (optional)
-# sphinx>=4.0.0
-# sphinx-rtd-theme>=0.5.0

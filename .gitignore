@@ -54,11 +54,19 @@ logs/
 # Output directories
 output/
 results/
-*.png
-*.npy
 
-# Data files (large files excluded from git)
+# ── Collaborator branch working directories (already merged into src/) ──
+branch_L1/
+branch_L2/
+branch_L3/
+
+# ── Raw / bulk data downloads ──
+cddis_data_2025/
+
+# ── Data files (large binary files excluded from git) ──
 data/**/*.tif
+data/**/*.tif.ovr
+data/**/*.ovr
 data/**/*.hgt
 data/**/*.nc
 data/**/*.grib
@@ -66,13 +74,24 @@ data/**/*.shp
 data/**/*.shx
 data/**/*.dbf
 data/**/*.prj
+data/**/*.cpg
 data/**/*.tle
 data/*.tle
 data/**/*.mat
 data/**/*.gz
 data/**/*.zip
+data/**/*.npy
+data/**/*.parquet
 
-# Keep directory structure
+# L3 tile cache (built by tools/build_l3_tile_cache.py, ~800 MB)
+data/l3_urban/*/tiles*/
+data/l3_urban/*/catalog/
+data/l3_urban/*/tile_list_*.csv
+
+# Raw shapefile archives
+data/l3_urban/shanxisheng/
+
+# Keep directory structure and documentation
 !data/**/.gitkeep
 !data/**/README.md
 
@@ -84,5 +103,4 @@ docs/_templates/
 # Temporary files
 *.tmp
 *.bak
-*.swp
 .cache/

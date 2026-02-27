@@ -1,213 +1,316 @@
 """
 L3 Urban/Micro Layer for SG-MRM project.
+Merged from branch_L3/zhangyue/src/layers/l3_urban.py.
 
-This layer handles:
-- Building distribution from shapefiles
-- Shadow and obstruction calculation
-- Ray tracing for multipath effects (V2.0)
+Responsibilities:
+- Load per-tile building height raster cache (H.npy, Occ.npy).
+- Compute NLoS mask via directional scan under parallel-wave assumption.
+- Map NLoS / occupancy mask to loss_db for L3 aggregation.
+- Output: 256x256 float32 loss matrix (dB).
 
+Interface:
+- __init__ accepts EITHER (config: dict, origin_lat, origin_lon) [main.py style]
+                       OR (tile_cache_root, nlos_loss_db, ...)   [standalone]
+- compute(origin_lat, origin_lon, timestamp=None, context=None)
+  context.incident_dir is required for NLoS calculation.
+
+Tile cache is produced by tools/build_l3_tile_cache.py.
 Coverage: 256 m, Resolution: 1 m/pixel
 """
 
-from datetime import datetime
-from typing import Dict, Any, List, Tuple
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
+
 import numpy as np
 
-from .base import BaseLayer
+from .base import BaseLayer, LayerContext
 
+
+# ── Incident direction helpers (from branch_L3) ───────────────────────────────
+
+def _stable_tile_id(tile_origin: Any) -> str:
+    """Derive a stable string tile ID from various tile_origin formats."""
+    if isinstance(tile_origin, Mapping) and "tile_id" in tile_origin:
+        return str(tile_origin["tile_id"])
+    if isinstance(tile_origin, str):
+        return tile_origin
+    payload = json.dumps(tile_origin, ensure_ascii=True, sort_keys=True, default=str)
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+    return f"tile_{digest}"
+
+
+def _normalize_incident_direction(incident_dir: Any) -> Tuple[float, float, float]:
+    """
+    Normalise incident_dir to (hx, hy, tan_elevation).
+
+    Supported formats:
+    - [east, north, up]  ENU vector (unit or non-unit)
+    - {"vector": [e, n, u]}
+    - {"az_deg": float, "el_deg": float}
+    """
+    if incident_dir is None:
+        raise ValueError("incident_dir is required for L3 urban occlusion.")
+
+    if isinstance(incident_dir, Mapping):
+        if "vector" in incident_dir:
+            return _normalize_incident_direction(incident_dir["vector"])
+        if "enu" in incident_dir:
+            return _normalize_incident_direction(incident_dir["enu"])
+        az = incident_dir.get("az_deg", incident_dir.get("azimuth_deg"))
+        el = incident_dir.get("el_deg", incident_dir.get("elevation_deg"))
+        if az is not None and el is not None:
+            az_rad = np.deg2rad(float(az))
+            el_rad = np.deg2rad(float(el))
+            cos_el = float(np.cos(el_rad))
+            hx = float(np.sin(az_rad) * cos_el)
+            hy = float(np.cos(az_rad) * cos_el)
+            tan_el = float(np.tan(el_rad))
+            hnorm = float(np.hypot(hx, hy))
+            if hnorm <= 1e-8:
+                raise ValueError("incident_dir horizontal component is too small.")
+            return hx / hnorm, hy / hnorm, tan_el
+        if "incident_dir" in incident_dir:
+            return _normalize_incident_direction(incident_dir["incident_dir"])
+        raise ValueError("Unsupported incident_dir mapping schema.")
+
+    vec = np.asarray(incident_dir, dtype=np.float64).reshape(-1)
+    if vec.size != 3:
+        raise ValueError("incident_dir vector must have exactly 3 values: [e, n, u].")
+    norm = float(np.linalg.norm(vec))
+    if norm <= 1e-8:
+        raise ValueError("incident_dir vector norm is zero.")
+    vec = vec / norm
+    hx, hy, uz = float(vec[0]), float(vec[1]), float(vec[2])
+    hnorm = float(np.hypot(hx, hy))
+    if hnorm <= 1e-8:
+        raise ValueError("incident_dir horizontal component is too small.")
+    return hx / hnorm, hy / hnorm, float(abs(uz) / hnorm)
+
+
+def compute_nlos_mask(height_m: np.ndarray, incident_dir: Any) -> np.ndarray:
+    """
+    Compute NLoS mask via directional scan, O(N^2 log N), per-ray sweep.
+
+    Args:
+        height_m:    2-D building height raster (metres), shape [H, W].
+        incident_dir: Incoming direction (ENU vector or az/el mapping).
+
+    Returns:
+        Boolean array of shape [H, W]; True = NLoS (blocked).
+    """
+    grid = np.asarray(height_m, dtype=np.float32)
+    if grid.ndim != 2:
+        raise ValueError("height_m must be a 2-D array.")
+
+    hx, hy, tan_el = _normalize_incident_direction(incident_dir)
+    if tan_el <= 1e-8:
+        raise ValueError("Elevation angle must be > 0 to compute shadow mask.")
+
+    rows, cols = grid.shape
+    x = np.arange(cols, dtype=np.float32) + 0.5
+    y = np.arange(rows, dtype=np.float32) + 0.5
+    xx, yy = np.meshgrid(x, y)
+
+    u = xx * hx + yy * hy
+    v = xx * (-hy) + yy * hx
+    ray_id = np.rint(v).astype(np.int32)
+
+    u_flat   = u.ravel()
+    ray_flat = ray_id.ravel()
+    h_flat   = grid.ravel()
+    order    = np.lexsort((u_flat, ray_flat))
+
+    blocked     = np.zeros_like(h_flat, dtype=bool)
+    current_ray = np.int32(-2**31)
+    max_term    = -np.inf
+    eps         = 1e-6
+
+    for idx in order:
+        rid = ray_flat[idx]
+        if rid != current_ray:
+            current_ray = rid
+            max_term    = -np.inf
+
+        ui = float(u_flat[idx])
+        if max_term >= tan_el * ui - eps:
+            blocked[idx] = True
+
+        term = float(h_flat[idx]) + tan_el * ui
+        if term > max_term:
+            max_term = term
+
+    return blocked.reshape(grid.shape)
+
+
+# ── L3UrbanLayer ──────────────────────────────────────────────────────────────
 
 class L3UrbanLayer(BaseLayer):
     """
-    L3 Urban/Micro Layer: Building-scale propagation effects.
+    L3 Urban/Micro Layer: building-scale NLoS propagation loss.
 
-    This layer computes electromagnetic loss due to urban structures,
-    including buildings, shadows, reflections, and multipath.
-
-    Coverage: 256 m × 256 m
-    Resolution: 1 m/pixel
-    Grid: 256 × 256 pixels
+    Requires tile cache produced by tools/build_l3_tile_cache.py:
+        <tile_cache_root>/<tile_id>/H.npy    — building height raster
+        <tile_cache_root>/<tile_id>/Occ.npy  — occupancy mask (optional)
     """
 
-    def __init__(self, config: Dict[str, Any], origin_lat: float, origin_lon: float):
+    name = "l3_urban"
+
+    def __init__(self,
+                 config: Union[Dict[str, Any], str, Path],
+                 origin_lat: float = None,
+                 origin_lon: float = None,
+                 nlos_loss_db: float = None,
+                 occ_loss_db: float = None):
         """
-        Initialize L3 Urban Layer.
+        Two calling conventions:
+
+        1. main.py style:
+               L3UrbanLayer(config_dict, origin_lat, origin_lon)
+           Config keys: tile_cache_root, nlos_loss_db, occ_loss_db,
+                        incident_dir (optional default direction)
+
+        2. Standalone style (matching branch_L3):
+               L3UrbanLayer("data/l3_urban/tiles", nlos_loss_db=20.0)
+        """
+        if isinstance(config, (str, Path)):
+            tile_cache_root = str(config)
+            self.nlos_loss_db = float(nlos_loss_db) if nlos_loss_db is not None else 20.0
+            self.occ_loss_db  = float(occ_loss_db)  if occ_loss_db  is not None else None
+            base_config = {"grid_size": 256, "coverage_km": 0.256, "resolution_m": 1.0}
+            origin_lat = origin_lat or 0.0
+            origin_lon = origin_lon or 0.0
+        else:
+            tile_cache_root   = config.get("tile_cache_root", "data/l3_urban/tiles")
+            self.nlos_loss_db = float(config.get("nlos_loss_db", 20.0))
+            _occ = config.get("occ_loss_db")
+            self.occ_loss_db  = float(_occ) if _occ is not None else None
+            # Default incident_dir from config (can be overridden per compute call)
+            self._default_incident_dir = config.get("incident_dir")
+            base_config = config
+
+        super().__init__(base_config, origin_lat, origin_lon)
+        self.tile_cache_root = Path(tile_cache_root)
+        self._tile_index: Optional[list] = None  # lazy-built list of (lon, lat, tile_id)
+
+    def _build_tile_index(self):
+        """Scan tile cache and build (lon, lat, tile_id) index from meta.json files."""
+        index = []
+        for tile_dir in self.tile_cache_root.iterdir():
+            meta_path = tile_dir / "meta.json"
+            if not meta_path.exists():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                ox = float(meta["origin"]["x"])
+                oy = float(meta["origin"]["y"])
+                index.append((ox, oy, tile_dir.name))
+            except Exception:
+                continue
+        self._tile_index = index
+
+    def _find_nearest_tile_id(self, lon: float, lat: float) -> str:
+        """Return tile_id of the nearest cached tile to (lon, lat)."""
+        if self._tile_index is None:
+            self._build_tile_index()
+        if not self._tile_index:
+            raise FileNotFoundError(f"[L3] Tile cache is empty: {self.tile_cache_root}")
+        best_id = min(self._tile_index, key=lambda t: (t[0] - lon) ** 2 + (t[1] - lat) ** 2)[2]
+        return best_id
+
+    def _load_tile_cache(self, tile_origin: Any) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        """Load H.npy and optionally Occ.npy for the given tile.
+
+        Tile lookup order:
+        1. Explicit tile_id string / mapping with 'tile_id' key.
+        2. lat/lon dict: hash using build_l3_tile_cache format (lon|lat|EPSG:4326).
+        3. Fallback: nearest tile in cache by Euclidean distance on lon/lat.
+        """
+        if isinstance(tile_origin, Mapping) and "lat" in tile_origin and "lon" in tile_origin:
+            import hashlib as _hl
+            lon = float(tile_origin["lon"])
+            lat = float(tile_origin["lat"])
+            token = f"{lon:.10f}|{lat:.10f}|EPSG:4326"
+            digest = _hl.sha1(token.encode("utf-8")).hexdigest()[:16]
+            tile_id = f"tile_{digest}"
+        else:
+            tile_id = _stable_tile_id(tile_origin)
+            lon = lat = None
+
+        tile_dir = self.tile_cache_root / tile_id
+        h_path   = tile_dir / "H.npy"
+        occ_path = tile_dir / "Occ.npy"
+
+        if not h_path.exists():
+            # Exact hash miss — fall back to nearest tile in cache
+            if lon is not None and lat is not None:
+                tile_id  = self._find_nearest_tile_id(lon, lat)
+                tile_dir = self.tile_cache_root / tile_id
+                h_path   = tile_dir / "H.npy"
+                occ_path = tile_dir / "Occ.npy"
+            if not h_path.exists():
+                raise FileNotFoundError(f"[L3] Missing tile cache: {h_path}")
+
+        height_m = np.load(h_path)
+        occ      = np.load(occ_path) if occ_path.exists() else None
+        return height_m, occ
+
+    def compute(self,
+                origin_lat: float = None,
+                origin_lon: float = None,
+                timestamp=None,
+                context: Optional[LayerContext] = None,
+                **kwargs) -> np.ndarray:
+        """
+        Compute L3 urban loss map (256x256, float32, dB).
 
         Args:
-            config: Layer configuration containing:
-                - grid_size: 256
-                - coverage_km: 0.256
-                - resolution_m: 1.0
-                - building_shapefile: Path to building shapefile
-                - satellite_azimuth_deg: Satellite azimuth angle
-                - satellite_elevation_deg: Satellite elevation angle
-            origin_lat: Origin latitude
-            origin_lon: Origin longitude
-        """
-        super().__init__(config, origin_lat, origin_lon)
-
-        # Extract L3-specific parameters
-        self.building_shapefile = config.get('building_shapefile', None)
-        self.satellite_azimuth_deg = config.get('satellite_azimuth_deg', 180.0)
-        self.satellite_elevation_deg = config.get('satellite_elevation_deg', 45.0)
-
-        # Building data
-        self.buildings = []  # List of building polygons with heights
-
-    def compute(self, timestamp: datetime) -> np.ndarray:
-        """
-        Compute L3 urban layer loss map.
-
-        For V1.0: Basic building shadow calculation
-        For V2.0: Full ray tracing with reflections and multipath
-
-        Args:
-            timestamp: Simulation timestamp
+            origin_lat: Origin latitude (used to derive tile_id when no explicit
+                        tile_id is provided in context.extras).
+            origin_lon: Origin longitude.
+            timestamp:  Unused by L3.
+            context:    Must carry context.incident_dir for NLoS calculation.
+                        Can also carry context.extras["tile_id"] to override
+                        the default lat/lon-based tile lookup.
 
         Returns:
-            256×256 array of loss values in dB
+            256x256 float32 loss array in dB.
         """
-        loss_map = np.zeros((self.grid_size, self.grid_size))
+        if origin_lat is None:
+            origin_lat = self.origin_lat
+        if origin_lon is None:
+            origin_lon = self.origin_lon
 
-        # TODO V1.0: Load building data from shapefile
-        # TODO V2.0: Implement GPU-accelerated ray tracing
+        ctx = LayerContext.from_any(context).merged_with_kwargs(kwargs)
 
-        if not self.buildings:
-            # No building data: return zero loss
-            return loss_map
+        # Resolve incident_dir: context > default config value
+        incident_dir = ctx.incident_dir
+        if incident_dir is None:
+            incident_dir = getattr(self, "_default_incident_dir", None)
+        if incident_dir is None:
+            raise ValueError(
+                "[L3] L3UrbanLayer.compute requires incident_dir via context "
+                "or config key 'incident_dir'."
+            )
 
-        # Calculate shadow map based on satellite position
-        shadow_map = self._calculate_shadows()
+        # Resolve tile_origin: explicit tile_id > lat/lon dict
+        tile_id = ctx.extras.get("tile_id")
+        if tile_id is not None:
+            tile_origin = {"tile_id": tile_id}
+        else:
+            tile_origin = {"lat": origin_lat, "lon": origin_lon}
 
-        # Apply shadow loss
-        for i in range(self.grid_size):
-            for j in range(self.grid_size):
-                if shadow_map[i, j]:
-                    # In shadow: high loss
-                    loss_map[i, j] = 50.0  # dB (complete obstruction)
-                else:
-                    # Line of sight: minimal loss
-                    loss_map[i, j] = 0.0
+        height_m, occ = self._load_tile_cache(tile_origin)
+        nlos_mask = compute_nlos_mask(height_m, incident_dir)
 
-        # TODO V2.0: Add multipath effects
-        # multipath_loss = self._calculate_multipath(i, j)
-        # loss_map[i, j] += multipath_loss
+        loss_db = np.zeros(height_m.shape, dtype=np.float32)
+        loss_db[nlos_mask] = self.nlos_loss_db
 
-        return loss_map
+        if self.occ_loss_db is not None:
+            occ_mask = occ.astype(bool) if occ is not None else (height_m > 0)
+            loss_db[occ_mask] = np.maximum(loss_db[occ_mask], self.occ_loss_db)
 
-    def _load_buildings(self):
-        """
-        Load building data from shapefile.
-
-        TODO V1.0: Implement shapefile loading
-        Expected format: Polygon geometries with height attribute
-
-        Each building should have:
-        - Polygon coordinates (lat/lon or local coordinates)
-        - Height in meters
-        - Optional: Material properties for V2.0
-        """
-        if self.building_shapefile is None:
-            return
-
-        # Placeholder for building loading
-        # import geopandas as gpd
-        # buildings_gdf = gpd.read_file(self.building_shapefile)
-        # self.buildings = self._convert_buildings(buildings_gdf)
-        pass
-
-    def _calculate_shadows(self) -> np.ndarray:
-        """
-        Calculate shadow map based on building positions and sun/satellite angle.
-
-        Returns:
-            256×256 boolean array (True = in shadow, False = line of sight)
-        """
-        shadow_map = np.zeros((self.grid_size, self.grid_size), dtype=bool)
-
-        # TODO V1.0: Implement shadow casting algorithm
-        # For each building:
-        #   1. Project building footprint onto ground
-        #   2. Calculate shadow direction from satellite azimuth
-        #   3. Extend shadow based on building height and elevation angle
-        #   4. Mark shadowed pixels
-
-        for building in self.buildings:
-            building_shadow = self._cast_building_shadow(building)
-            shadow_map = np.logical_or(shadow_map, building_shadow)
-
-        return shadow_map
-
-    def _cast_building_shadow(self, building: Dict[str, Any]) -> np.ndarray:
-        """
-        Cast shadow for a single building.
-
-        Args:
-            building: Building dictionary with 'polygon' and 'height'
-
-        Returns:
-            256×256 boolean array of shadow for this building
-        """
-        shadow = np.zeros((self.grid_size, self.grid_size), dtype=bool)
-
-        # TODO V1.0: Implement shadow casting
-        # Calculate shadow length: L = H / tan(elevation)
-        # Project shadow in azimuth direction
-
-        return shadow
-
-    def _calculate_multipath(self, i: int, j: int) -> float:
-        """
-        Calculate multipath effects at pixel (i, j).
-
-        TODO V2.0: Implement ray tracing for multipath
-        This requires:
-        - Ray launching from satellite
-        - Reflection from building surfaces
-        - Path loss calculation for each ray
-        - Coherent combination of multipath components
-
-        Args:
-            i: Row index
-            j: Column index
-
-        Returns:
-            Multipath loss/gain in dB
-        """
-        # Placeholder: No multipath effects for V1.0
-        return 0.0
-
-    def _trace_ray(self, origin: Tuple[float, float, float],
-                   direction: Tuple[float, float, float],
-                   max_reflections: int = 3) -> List[Dict[str, Any]]:
-        """
-        Trace a ray through the urban environment.
-
-        TODO V2.0: Implement GPU-accelerated ray tracing
-
-        Args:
-            origin: Ray origin (x, y, z) in meters
-            direction: Ray direction (normalized vector)
-            max_reflections: Maximum number of reflections to trace
-
-        Returns:
-            List of ray path segments with reflection points
-        """
-        # Placeholder for ray tracing
-        return []
-
-    def add_building(self, polygon: List[Tuple[float, float]], height: float,
-                    material: str = 'concrete'):
-        """
-        Add a building to the urban environment.
-
-        Args:
-            polygon: List of (lat, lon) coordinates defining building footprint
-            height: Building height in meters
-            material: Building material (for reflection properties in V2.0)
-        """
-        building = {
-            'polygon': polygon,
-            'height': height,
-            'material': material
-        }
-        self.buildings.append(building)
+        return loss_db

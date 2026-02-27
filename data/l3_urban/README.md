@@ -1,68 +1,57 @@
 # L3 Urban Layer Data
 
-L3 城市层数据目录，用于建筑阴影和多径效应计算。
+L3 城市层数据目录，存放建筑高度栅格 tile cache 用于 NLoS 遮挡计算。
 
-**当前状态**：V1.0 中 L3 层为占位实现，无建筑数据时始终返回零损耗。V2.0 将启用完整城市传播计算。
+## 当前数据（西安市区）
 
----
+### `xian/tiles_60/` — 西安市区 tile cache
 
-## 预期数据格式（V2.0）
+- **tile 数量**: 1320 tiles（40×33 网格）
+- **覆盖范围**: 34.22°~34.31°N, 108.90°~108.99°E（西安市区核心区）
+- **tile 尺寸**: 256 m × 256 m，分辨率 1 m/pixel
+- **每个 tile 包含**:
+  - `H.npy` — 建筑高度栅格 (256×256 float32, 米)
+  - `Occ.npy` — 建筑占用掩码 (256×256 bool)
+  - `meta.json` — tile 元数据（origin 坐标、CRS 等）
 
-### 建筑 Shapefile (`.shp`)
+### `xian/catalog/buildings_xian.parquet` — 建筑目录
 
-- 来源：[OpenStreetMap](https://www.openstreetmap.org/)、本地 GIS 数据库、城市规划部门
-- 必需属性：
-  - `geometry`：建筑轮廓多边形（WGS84 坐标）
-  - `height`：建筑高度（米）
-- 可选属性：
-  - `material`：建筑材料（`concrete`、`glass`、`metal`），用于 V2.0 反射系数计算
-  - `floors`：楼层数
+- **来源**: 陕西省 70 个 shapefile（EPSG:3857）
+- **记录数**: 359,691 栋建筑
+- **高度范围**: 3~122 m
 
-### 3D 城市模型（V2.0 GPU 光线追踪）
+## Tile cache 构建流程
 
-- 格式：OBJ (`.obj`)、glTF (`.gltf`)、CityGML
-- 用于高精度多径效应仿真
+```bash
+# 1. 预处理 shapefile → parquet 目录
+python tools/preprocess_buildings_catalog.py \
+  --input-root data/l3_urban/shanxisheng/ \
+  --output data/l3_urban/xian/catalog/buildings_xian.parquet
 
----
-
-## 数据获取
-
-### 从 OpenStreetMap 提取建筑数据
-
-```python
-import osmnx as ox
-
-# 下载指定区域的建筑数据（示例：北京朝阳区）
-buildings = ox.geometries_from_place(
-    "Chaoyang, Beijing, China",
-    tags={'building': True}
-)
-
-# 保留必要字段并导出
-buildings = buildings[['geometry', 'height']].dropna(subset=['geometry'])
-buildings.to_file("data/l3_urban/buildings.shp")
+# 2. 构建 tile cache
+python tools/build_l3_tile_cache.py \
+  --catalog data/l3_urban/xian/catalog/buildings_xian.parquet \
+  --tile-list data/l3_urban/xian/tile_list_xian_60.csv \
+  --output-root data/l3_urban/xian/tiles_60/
 ```
 
----
-
-## 配置方式（V2.0）
-
-在 `configs/mission_config.yaml` 中指定建筑数据路径：
+## 配置
 
 ```yaml
 layers:
-  l3:
+  l3_urban:
     enabled: true
-    building_shapefile: data/l3_urban/buildings.shp
-    satellite_azimuth_deg: 180.0
-    satellite_elevation_deg: 45.0
+    tile_cache_root: "data/l3_urban/xian/tiles_60"
+    nlos_loss_db: 20.0
+    occ_loss_db: 30.0
+    incident_dir:
+      az_deg: 180.0
+      el_deg: 45.0
 ```
 
----
+## 扩展到其他城市
 
-## V2.0 计划功能
-
-- Shapefile 加载与坐标投影到本地网格（256 m × 256 m，1 m/pixel）
-- 建筑阴影计算（基于卫星方位角和仰角的投影遮挡）
-- GPU 加速光线追踪（多径反射效应）
-- 建筑材料反射系数建模
+1. 准备建筑 shapefile（需包含 Height 字段）
+2. 生成 tile list CSV（`origin_x,origin_y` 格式，EPSG:4326）
+3. 运行上述构建流程，修改 `--output-root` 路径
+4. 更新 `mission_config.yaml` 中的 `tile_cache_root`

@@ -1,248 +1,325 @@
 """
 L1 Macro/Space Layer for SG-MRM project.
+Merged from branch_L1/SG-MRM-L1/src/layers/L1_macro.py (v1.1).
 
-This layer handles:
-- Satellite positioning (V1.0: fixed at zenith; V2.0: TLE-based)
-- Free Space Path Loss
-- Atmospheric attenuation (ITU-R P.618; ERA5-enhanced when data available)
-- Ionospheric effects (ITU-R P.531; real TEC from IONEX when data available)
+Responsibilities:
+- Parse TLE file and select the best visible satellite (highest elevation,
+  valid orbit altitude) using Skyfield.
+- Build a 256x256 geographic grid centred on origin.
+- Compute per-pixel azimuth / elevation / slant-range.
+- Apply 2-D Gaussian beam antenna gain (31x31 phased array, Ku-band 14.5 GHz).
+- Compute Free Space Path Loss and polarization loss.
+- Output: 256x256 float32 net-loss matrix (dB).
 
+Interface:
+- __init__ accepts EITHER (config: dict, origin_lat, origin_lon) [main.py style]
+                       OR (config_path: str)                      [standalone style]
+- compute(origin_lat, origin_lon, timestamp=None, context=None)
+
+Physics reference: ITU-R P.618; Remote Sensing paper (You Fu et al., 2026).
 Coverage: 256 km, Resolution: 1000 m/pixel
 """
 
-from datetime import datetime
-from typing import Dict, Any
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
+import yaml
 
-from .base import BaseLayer
-from ..core.physics import (
-    free_space_path_loss,
-    atmospheric_loss,
-    atmospheric_loss_era5,
-    ionospheric_loss,
+from skyfield.api import load, EarthSatellite, wgs84
+
+from .base import BaseLayer, LayerContext
+from ..core.grid import (
+    get_grid_latlon,
+    get_azimuth_elevation,
+    L1_COVERAGE,
+    GRID_SIZE,
+    EARTH_RADIUS_M,
 )
-from ..utils.ionex_loader import IonexLoader
-from ..utils.era5_loader import load_era5
-from ..utils.tle_loader import TleLoader
+from ..core.physics import (
+    fspl_db,
+    polarization_loss_db,
+    gaussian_beam_gain_db,
+    phased_array_peak_gain_db,
+    phased_array_hpbw_deg,
+    SPEED_OF_LIGHT,
+)
 
+
+# ── TLE helpers ───────────────────────────────────────────────────────────────
+
+def _parse_tle_file(tle_file_path: str) -> Tuple[List[EarthSatellite], List[Tuple[str, str]]]:
+    """Parse a TLE file and return (satellites, tle_groups)."""
+    tle_file = Path(tle_file_path)
+    if not tle_file.exists():
+        raise FileNotFoundError(f"TLE file not found: {tle_file_path}")
+
+    with open(tle_file, "r", encoding="utf-8") as f:
+        tle_lines = [line.strip() for line in f if line.strip()]
+
+    satellites: List[EarthSatellite] = []
+    valid_tle_groups: List[Tuple[str, str]] = []
+
+    i = 0
+    while i < len(tle_lines):
+        if (tle_lines[i].startswith("1") and
+                i + 1 < len(tle_lines) and
+                tle_lines[i + 1].startswith("2")):
+            line1, line2 = tle_lines[i], tle_lines[i + 1]
+            valid_tle_groups.append((line1, line2))
+            satellites.append(EarthSatellite(line1, line2))
+            i += 2
+        else:
+            i += 1
+
+    print(f"[L1] Parsed {len(satellites)} TLE entries from {tle_file.name}")
+    return satellites, valid_tle_groups
+
+
+def _get_norad_id(tle_group: Tuple[str, str]) -> str:
+    return tle_group[1].split()[1]
+
+
+def _get_sat_altitude_km(sat: EarthSatellite, t) -> float:
+    """Compute orbital altitude (km) from geocentric position vector."""
+    pos_km = sat.at(t).position.km
+    return float(np.linalg.norm(pos_km)) - 6371.0
+
+
+# ── L1MacroLayer ──────────────────────────────────────────────────────────────
 
 class L1MacroLayer(BaseLayer):
     """
-    L1 Macro/Space Layer: Satellite-to-ground propagation.
+    L1 Macro/Space Layer: satellite-to-ground propagation loss.
 
-    Computes wide-area electromagnetic loss from satellite to ground,
-    including free space path loss, atmospheric effects, and ionospheric
-    effects. All calculations are fully vectorized over the 256×256 grid.
-
-    Coverage: 256 km × 256 km
-    Resolution: 1000 m/pixel
-    Grid: 256 × 256 pixels
+    Output matrix semantics:
+        net_loss_db[i,j] = FSPL[i,j] + Pol_Loss - Antenna_Gain[i,j]
+    Higher value means greater electromagnetic loss at that pixel.
     """
 
-    def __init__(self, config: Dict[str, Any], origin_lat: float, origin_lon: float):
+    # Class-level constants (Ku-band, 31x31 array)
+    FREQ_HZ_DEFAULT     = 14.5e9
+    ARRAY_ROWS          = 31
+    ARRAY_COLS          = 31
+    ELEMENT_GAIN_DBI    = 5.0
+    MIN_ELEVATION_DEG   = 5.0
+    NO_COVERAGE_LOSS_DB = 200.0
+    MIN_ORBIT_ALT_KM    = 200.0
+    MAX_ORBIT_ALT_KM    = 40_000.0
+
+    def __init__(self,
+                 config: Union[Dict[str, Any], str],
+                 origin_lat: float = None,
+                 origin_lon: float = None):
         """
-        Initialize L1 Macro Layer.
-
-        Args:
-            config: Layer configuration. Recognized keys:
-                grid_size, coverage_km, resolution_m  (required by BaseLayer)
-                frequency_ghz          : operating frequency (default 10.0)
-                satellite_altitude_km  : LEO altitude (default 550.0)
-                tec                    : fallback TEC in TECU (default 10.0)
-                rain_rate_mm_h         : fallback rain rate (default 0.0)
-                ionex_file             : path to IONEX .gz file (optional)
-                era5_file              : path to ERA5 NetCDF file (optional)
-                tle_file               : path to TLE file (optional; enables multi-sat mode)
-            origin_lat: Origin latitude in degrees
-            origin_lon: Origin longitude in degrees
+        Two calling conventions:
+          1. main.py style:   L1MacroLayer(config_dict, origin_lat, origin_lon)
+          2. Standalone style: L1MacroLayer("configs/mission_config.yaml")
         """
-        super().__init__(config, origin_lat, origin_lon)
-
-        self.frequency_ghz = config.get('frequency_ghz', 10.0)
-        self.satellite_altitude_km = config.get('satellite_altitude_km', 550.0)
-
-        # Load real data sources (all optional — None on failure)
-        ionex_path = config.get('ionex_file')
-        self.ionex = IonexLoader(ionex_path) if ionex_path else None
-
-        self.era5 = load_era5(config.get('era5_file'))
-
-        tle_path = config.get('tle_file')
-        self.tle_loader = TleLoader(tle_path) if tle_path else None
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def compute(self, timestamp: datetime) -> np.ndarray:
-        """
-        Compute L1 macro layer loss map (fully vectorized).
-
-        When tle_loader is present: iterates over all Starlink satellites,
-        computes per-pixel loss for each visible satellite, and returns the
-        minimum loss (best link) per pixel.
-
-        When tle_loader is absent: falls back to single satellite fixed at zenith.
-
-        Args:
-            timestamp: Simulation timestamp
-
-        Returns:
-            256×256 array of total loss values in dB (NaN for no coverage)
-        """
-        coords = self.grid.get_pixel_centers()
-        lats = coords[:, :, 0]   # (256, 256)
-        lons = coords[:, :, 1]
-
-        epoch_sec = (timestamp.hour * 3600
-                     + timestamp.minute * 60
-                     + timestamp.second)
-
-        # TEC map (shared across all satellites)
-        if self.ionex is not None:
-            tec = self.ionex.get_tec(epoch_sec, lats, lons)
+        if isinstance(config, str):
+            cfg_path = Path(config)
+            self.cfg = self._load_yaml(cfg_path)
+            origin_cfg = self.cfg.get("origin", {})
+            origin_lat = float(origin_cfg.get("lat", 34.3416))
+            origin_lon = float(origin_cfg.get("lon", 108.9398))
+            base_config = {"grid_size": 256, "coverage_km": 256.0, "resolution_m": 1000.0}
         else:
-            tec = np.full_like(lats, self.config.get('tec', 10.0))
+            self.cfg = config
+            base_config = config
 
-        # IWV map (shared across all satellites)
-        if self.era5 is not None:
-            iwv = self.era5.get_iwv(timestamp.hour, lats, lons)
+        super().__init__(base_config, origin_lat, origin_lon)
+
+        # RF / antenna parameters
+        freq_cfg = self.cfg.get("frequency", {})
+        if isinstance(freq_cfg, dict):
+            self.freq_hz = float(freq_cfg.get("center_hz", self.FREQ_HZ_DEFAULT))
         else:
-            iwv = None
+            self.freq_hz = float(self.cfg.get("frequency_ghz", self.FREQ_HZ_DEFAULT / 1e9)) * 1e9
 
-        if self.tle_loader is not None:
-            return self._compute_constellation(
-                timestamp, lats, lons, tec, iwv)
-        else:
-            return self._compute_single_sat(
-                lats, lons, tec, iwv,
-                self.origin_lat, self.origin_lon,
-                self.satellite_altitude_km)
+        self.wavelength_m = SPEED_OF_LIGHT / self.freq_hz
+        self.element_spacing_m = 0.5 * self.wavelength_m
 
-    def _compute_single_sat(self, lats, lons, tec, iwv,
-                            sat_lat, sat_lon, sat_alt_km):
-        """Compute loss map for a single satellite position."""
-        slant_range_km, elevation_deg = self._calc_geometry_vec(
-            lats, lons, sat_lat, sat_lon, sat_alt_km)
+        n_elements = self.ARRAY_ROWS * self.ARRAY_COLS
+        self.peak_gain_db = phased_array_peak_gain_db(n_elements, self.ELEMENT_GAIN_DBI)
+        self.hpbw_az_deg, self.hpbw_el_deg = phased_array_hpbw_deg(
+            self.ARRAY_ROWS, self.ARRAY_COLS,
+            self.wavelength_m, self.element_spacing_m
+        )
 
-        fspl = free_space_path_loss(slant_range_km, self.frequency_ghz)
-        iono = ionospheric_loss(self.frequency_ghz, tec)
+        pol_cfg = self.cfg.get("polarization", {})
+        self.pol_mismatch_deg = float(pol_cfg.get("mismatch_angle_deg", 0.0))
+        self.pol_loss_db = polarization_loss_db(self.pol_mismatch_deg)
 
-        if iwv is not None:
-            atm = atmospheric_loss_era5(elevation_deg, self.frequency_ghz, iwv)
-        else:
-            atm = atmospheric_loss(
-                elevation_deg, self.frequency_ghz,
-                self.config.get('rain_rate_mm_h', 0.0))
+        self.target_norad_ids: List[str] = [
+            str(x) for x in self.cfg.get("target_norad_ids", [])
+        ]
 
-        loss_map = fspl + atm + iono
-        loss_map = np.where(elevation_deg <= 5.0, np.nan, loss_map)
-        return loss_map
+        # Resolve TLE file path
+        tle_cfg = self.cfg.get("tle", {})
+        tle_file = tle_cfg.get("file") if isinstance(tle_cfg, dict) else None
+        if tle_file is None:
+            tle_file = self.cfg.get("tle_file")
+        if tle_file is None:
+            raise ValueError("[L1] No TLE file specified (key: tle.file or tle_file).")
 
-    def _compute_constellation(self, timestamp, lats, lons, tec, iwv):
+        _root = Path(__file__).resolve().parents[2]
+        tle_path = (_root / tle_file) if not Path(tle_file).is_absolute() else Path(tle_file)
+        if not tle_path.exists():
+            tle_path = Path(tle_file)
+        self.satellites, self.tle_groups = _parse_tle_file(str(tle_path))
+
+        self.ts = load.timescale()
+        self._sim_time = None
+
+        self._print_antenna_params()
+
+    @staticmethod
+    def _load_yaml(cfg_path: Path) -> Dict[str, Any]:
+        if not cfg_path.exists():
+            print(f"[L1] Config not found at {cfg_path}, using defaults.")
+            return {}
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+
+    def _print_antenna_params(self):
+        print(f"[L1] {self.ARRAY_ROWS}x{self.ARRAY_COLS} array | "
+              f"{self.freq_hz/1e9:.2f} GHz | "
+              f"peak {self.peak_gain_db:.2f} dBi | "
+              f"HPBW az={self.hpbw_az_deg:.2f}deg el={self.hpbw_el_deg:.2f}deg")
+
+    def set_time(self, dt: datetime):
+        """Set simulation time."""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        self._sim_time = self.ts.from_datetime(dt)
+
+    def compute(self,
+                origin_lat: float = None,
+                origin_lon: float = None,
+                timestamp: Optional[datetime] = None,
+                context: Optional[LayerContext] = None,
+                **kwargs) -> np.ndarray:
         """
-        Compute best-satellite loss map over the full Starlink constellation.
+        Compute L1 net-loss matrix (256x256, float32, dB).
 
-        Processes satellites in batches of 50 to limit memory usage.
-        Returns per-pixel minimum loss (NaN where no satellite is visible).
+        Pixels with elevation < MIN_ELEVATION_DEG are set to NO_COVERAGE_LOSS_DB.
         """
-        sat_lats, sat_lons, sat_alts = self.tle_loader.get_geodetic(timestamp)
+        if origin_lat is None:
+            origin_lat = self.origin_lat
+        if origin_lon is None:
+            origin_lon = self.origin_lon
 
-        # Filter to plausible LEO altitudes
-        mask = (sat_alts >= 300.0) & (sat_alts <= 700.0)
-        sat_lats = sat_lats[mask]
-        sat_lons = sat_lons[mask]
-        sat_alts = sat_alts[mask]
+        if timestamp is not None:
+            self.set_time(timestamp)
+        if self._sim_time is None:
+            self._sim_time = self.ts.now()
+            print("[L1] No simulation time set — using current UTC.")
 
-        best = np.full_like(lats, np.inf)
-        BATCH = 50
+        print(f"[L1] Computing @ ({origin_lat:.4f}N, {origin_lon:.4f}E)")
 
-        for start in range(0, len(sat_lats), BATCH):
-            sl = slice(start, start + BATCH)
-            for slat, slon, salt in zip(sat_lats[sl], sat_lons[sl], sat_alts[sl]):
-                slant, el = self._calc_geometry_vec(lats, lons, slat, slon, salt)
-                # Skip satellites below 5° elevation for this pixel
-                visible = el > 5.0
-                if not np.any(visible):
+        sat, sat_info = self._select_best_satellite(origin_lat, origin_lon)
+
+        lat_grid, lon_grid, x_m, y_m = get_grid_latlon(origin_lat, origin_lon)
+
+        lat_rad = np.deg2rad(origin_lat)
+        sat_x_m = ((sat_info["lon_deg"] - origin_lon) *
+                   np.deg2rad(1.0) * EARTH_RADIUS_M * np.cos(lat_rad))
+        sat_y_m = ((sat_info["lat_deg"] - origin_lat) *
+                   np.deg2rad(1.0) * EARTH_RADIUS_M)
+
+        azimuth_deg, elevation_deg, slant_range_m = get_azimuth_elevation(
+            sat_x_m, sat_y_m, sat_info["alt_m"], x_m, y_m
+        )
+
+        delta_el = sat_info["elevation_deg"] - elevation_deg
+        delta_az = np.zeros_like(azimuth_deg)
+        gain_db = gaussian_beam_gain_db(
+            theta_az_deg=delta_az,
+            theta_el_deg=delta_el,
+            peak_gain_db=self.peak_gain_db,
+            hpbw_az_deg=self.hpbw_az_deg * 3.0,
+            hpbw_el_deg=self.hpbw_el_deg * 3.0,
+        )
+
+        fspl = fspl_db(slant_range_m, self.freq_hz)
+        net_loss_db = fspl + self.pol_loss_db - gain_db
+
+        occlusion_mask = elevation_deg < self.MIN_ELEVATION_DEG
+        net_loss_db[occlusion_mask] = self.NO_COVERAGE_LOSS_DB
+
+        valid = net_loss_db < self.NO_COVERAGE_LOSS_DB
+        if valid.any():
+            print(f"[L1] Done | visible {int(np.sum(~occlusion_mask))}/{GRID_SIZE**2} px | "
+                  f"loss {net_loss_db[valid].min():.1f}~{net_loss_db[valid].max():.1f} dB")
+
+        return net_loss_db.astype(np.float32)
+
+    def _select_best_satellite(self, origin_lat: float,
+                               origin_lon: float) -> Tuple[EarthSatellite, Dict]:
+        """Select satellite with highest elevation angle over origin."""
+        observer = wgs84.latlon(origin_lat, origin_lon)
+        best_sat  = None
+        best_info: Dict = {}
+        best_el   = -999.0
+        skipped   = 0
+
+        for sat, tg in zip(self.satellites, self.tle_groups):
+            norad_id = _get_norad_id(tg)
+            if self.target_norad_ids and norad_id not in self.target_norad_ids:
+                continue
+            try:
+                diff = sat - observer
+                topocentric = diff.at(self._sim_time)
+                alt, az, dist = topocentric.altaz()
+                el_deg  = float(alt.degrees)
+                az_deg  = float(az.degrees)
+                dist_km = float(dist.km)
+
+                alt_km = _get_sat_altitude_km(sat, self._sim_time)
+                if alt_km < self.MIN_ORBIT_ALT_KM or alt_km > self.MAX_ORBIT_ALT_KM:
+                    skipped += 1
                     continue
 
-                fspl = free_space_path_loss(slant, self.frequency_ghz)
-                iono = ionospheric_loss(self.frequency_ghz, tec)
-                if iwv is not None:
-                    atm = atmospheric_loss_era5(el, self.frequency_ghz, iwv)
-                else:
-                    atm = atmospheric_loss(
-                        el, self.frequency_ghz,
-                        self.config.get('rain_rate_mm_h', 0.0))
+                geocentric = sat.at(self._sim_time)
+                subpoint   = wgs84.subpoint_of(geocentric)
+                sat_lat    = float(subpoint.latitude.degrees)
+                sat_lon    = float(subpoint.longitude.degrees)
+            except Exception:
+                continue
 
-                loss = np.where(visible, fspl + atm + iono, np.inf)
-                best = np.minimum(best, loss)
+            if el_deg > best_el:
+                best_el  = el_deg
+                best_sat = sat
+                best_info = {
+                    "norad_id"      : norad_id,
+                    "elevation_deg" : el_deg,
+                    "azimuth_deg"   : az_deg,
+                    "slant_range_km": dist_km,
+                    "lat_deg"       : sat_lat,
+                    "lon_deg"       : sat_lon,
+                    "alt_m"         : alt_km * 1000.0,
+                }
 
-        # Pixels with no visible satellite → NaN
-        result = np.where(np.isinf(best), np.nan, best)
-        return result
+        if skipped:
+            print(f"[L1] Skipped {skipped} satellites with invalid orbit altitude.")
+        if best_sat is None:
+            raise RuntimeError("[L1] No visible satellite found. Check TLE file or NORAD ID filter.")
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+        print(f"[L1] Selected NORAD {best_info['norad_id']} | "
+              f"el={best_info['elevation_deg']:.2f}deg | "
+              f"alt={best_info['alt_m']/1e3:.1f} km")
+        return best_sat, best_info
 
-    def _calc_geometry_vec(self, pixel_lat: np.ndarray, pixel_lon: np.ndarray,
-                           sat_lat: float, sat_lon: float,
-                           sat_alt_km: float):
-        """
-        Vectorized slant range and elevation angle calculation.
+    # V2.0 stubs
+    def _compute_ionospheric_scintillation_db(self, *_) -> np.ndarray:
+        return np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
 
-        Uses spherical law of cosines for the central angle ψ between the
-        sub-satellite point and each ground pixel, then derives slant range
-        and elevation from the resulting triangle.
+    def _compute_tropospheric_rain_attenuation_db(self, *_) -> np.ndarray:
+        return np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
 
-        Args:
-            pixel_lat : (H, W) latitude array in degrees
-            pixel_lon : (H, W) longitude array in degrees
-            sat_lat   : sub-satellite latitude in degrees
-            sat_lon   : sub-satellite longitude in degrees
-            sat_alt_km: satellite altitude above Earth surface in km
+    def _load_antenna_pattern_csv(self, pattern_file: str):
+        return None
 
-        Returns:
-            slant_range_km : (H, W) array in km
-            elevation_deg  : (H, W) array in degrees
-        """
-        R_E = 6371.0  # Earth radius km
-        r_sat = R_E + sat_alt_km
-
-        # Central angle ψ via spherical law of cosines
-        lat1 = np.radians(pixel_lat)
-        lon1 = np.radians(pixel_lon)
-        lat2 = np.radians(sat_lat)
-        lon2 = np.radians(sat_lon)
-
-        cos_psi = (np.sin(lat1) * np.sin(lat2)
-                   + np.cos(lat1) * np.cos(lat2) * np.cos(lon1 - lon2))
-        cos_psi = np.clip(cos_psi, -1.0, 1.0)
-
-        # Slant range from law of cosines in the Earth-center triangle
-        slant_range_km = np.sqrt(R_E**2 + r_sat**2 - 2 * R_E * r_sat * cos_psi)
-
-        # Elevation angle: angle at the ground station
-        # sin(elevation) = (r_sat * cos_psi - R_E) / slant_range
-        sin_el = (r_sat * cos_psi - R_E) / np.where(slant_range_km > 0,
-                                                      slant_range_km, 1.0)
-        sin_el = np.clip(sin_el, -1.0, 1.0)
-        elevation_deg = np.degrees(np.arcsin(sin_el))
-
-        return slant_range_km, elevation_deg
-
-    def _calculate_geometry(self, pixel_lat: float, pixel_lon: float,
-                            sat_lat: float, sat_lon: float,
-                            sat_alt_km: float) -> tuple:
-        """
-        Scalar geometry calculation (kept for backward compatibility / tests).
-
-        Returns:
-            Tuple of (slant_range_km, elevation_deg)
-        """
-        slant, el = self._calc_geometry_vec(
-            np.array([[pixel_lat]]), np.array([[pixel_lon]]),
-            sat_lat, sat_lon, sat_alt_km
-        )
-        return float(slant[0, 0]), float(el[0, 0])

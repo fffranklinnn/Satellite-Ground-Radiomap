@@ -1,55 +1,39 @@
 # L2 Terrain Layer Data
 
-L2 地形层数据目录，用于 DEM（数字高程模型）地形遮挡计算。
+L2 地形层数据目录，存放 DEM（数字高程模型）文件用于地形遮挡计算。
 
-**当前状态**：V1.0 中 L2 层为占位实现，此目录暂无数据文件。V2.0 将启用完整地形计算。
+## 当前数据
 
----
+### `全国DEM数据.tif` — 全国数字高程模型
 
-## 预期数据格式（V2.0）
+- **格式**: GeoTIFF
+- **覆盖范围**: 15°~57°N, 73°~139°E（全国）
+- **分辨率**: ~0.000278°（约 30 m）
+- **像素尺寸**: 237600 × 151200
+- **坐标系**: WGS84
 
-### GeoTIFF (`.tif`)
+## L2 层处理流程
 
-- 来源：[ASTER GDEM](https://asterweb.jpl.nasa.gov/gdem.asp)、[Copernicus DEM](https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model)
-- 分辨率：30 m 或 90 m
-- 坐标系：WGS84
+1. 根据 origin 坐标计算 25.6 km × 25.6 km 窗口范围
+2. 通过 rasterio 窗口读取，双线性重采样到 256×256（100 m/px）
+3. 向量化累积最大值 LOS 遮挡分析
+4. 遮挡像素施加 20 dB 衍射损耗
 
-### SRTM HGT (`.hgt`)
-
-- 来源：[USGS Earth Explorer](https://earthexplorer.usgs.gov/)、[NASA SRTM](https://www2.jpl.nasa.gov/srtm/)
-- 分辨率：30 m（SRTM1）或 90 m（SRTM3）
-- 文件命名：`N{lat}E{lon}.hgt`，例如 `N39E116.hgt`（覆盖北京区域）
-
----
-
-## 数据获取
-
-```bash
-# 下载北京区域 SRTM 瓦片（需要 USGS 账号）
-# 覆盖范围：N39°-N40°, E116°-E117°
-wget "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/N39E116.SRTMGL1.hgt.zip"
-unzip N39E116.SRTMGL1.hgt.zip -d data/l2_topo/
-```
-
----
-
-## 配置方式（V2.0）
-
-在 `configs/mission_config.yaml` 中指定 DEM 文件路径：
+## 配置
 
 ```yaml
 layers:
-  l2:
+  l2_topo:
     enabled: true
-    dem_file: data/l2_topo/N39E116.hgt
+    dem_file: "data/l2_topo/全国DEM数据.tif"
     satellite_elevation_deg: 45.0
+    satellite_azimuth_deg: 180.0
 ```
 
----
+## 其他 DEM 数据源
 
-## V2.0 计划功能
+如需替换或补充 DEM 数据：
 
-- DEM 数据加载与重采样到 100 m/pixel 网格（25.6 km 覆盖）
-- 逐像素视线（LOS）分析：检查卫星方向是否被地形遮挡
-- 刃形衍射损耗计算（ITU-R P.526）
-- 地形剖面提取（Bresenham 直线算法）
+- [SRTM](https://www2.jpl.nasa.gov/srtm/)：30 m / 90 m，`.hgt` 格式
+- [Copernicus DEM](https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model)：30 m GeoTIFF
+- [ASTER GDEM](https://asterweb.jpl.nasa.gov/gdem.asp)：30 m GeoTIFF

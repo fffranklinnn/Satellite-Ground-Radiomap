@@ -1,202 +1,116 @@
-# Quick Start Guide
+# 快速入门
 
-This guide will help you get started with SG-MRM in 5 minutes.
+## 安装
 
-## Installation
-
-1. **Clone the repository** (or download the code):
-```bash
-cd SG-RM
-```
-
-2. **Install dependencies**:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. **Verify installation**:
+验证安装：
+
 ```bash
 python main.py --help
 ```
 
-## Run Your First Simulation
+## 运行仿真
 
-### Option 1: Run Example Scripts
-
-The easiest way to get started:
-
-```bash
-# Basic usage example
-python examples/basic_usage.py
-
-# V1.0 static link example
-python examples/v1_static_link.py
-```
-
-Output will be saved to `output/examples/` or `output/v1_static_link/`.
-
-### Option 2: Run with Configuration File
+### 方式一：使用配置文件
 
 ```bash
 python main.py --config configs/mission_config.yaml --output output/
 ```
 
-This will:
-1. Load configuration from `configs/mission_config.yaml`
-2. Initialize L1 and L3 layers (L2 disabled by default)
-3. Compute radio maps for the time range specified
-4. Save results to `output/` directory
+默认配置以西安为中心 (34.3416°N, 108.9398°E)，Ku-band 14.5 GHz，时间范围 2025-01-01 全天（6 小时步长）。
 
-### Option 3: Programmatic Usage
+### 方式二：运行可视化脚本
 
-Create a Python script:
+```bash
+# L1 全天时序 + 参数扫描
+python scripts/generate_l1_map.py
+
+# 全球六城市对比
+python scripts/generate_global_comparison.py
+```
+
+### 方式三：编程接口
 
 ```python
 from datetime import datetime
-from src.layers import L1MacroLayer
+from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
 from src.engine import RadioMapAggregator
-from src.utils import plot_radio_map
+from src.layers.base import LayerContext
+import yaml
 
-# Configure L1 layer
-l1_config = {
-    'grid_size': 256,
-    'coverage_km': 256.0,
-    'resolution_m': 1000.0,
-    'frequency_ghz': 10.0,
-    'satellite_altitude_km': 550.0
-}
+config = yaml.safe_load(open('configs/mission_config.yaml'))
+lat, lon = config['origin']['latitude'], config['origin']['longitude']
 
-# Initialize
-l1_layer = L1MacroLayer(l1_config, origin_lat=39.9, origin_lon=116.4)
-aggregator = RadioMapAggregator(l1_layer=l1_layer)
+# 初始化
+l1 = L1MacroLayer(config['layers']['l1_macro'], lat, lon)
+l2 = L2TopoLayer(config['layers']['l2_topo'], lat, lon)
+l3 = L3UrbanLayer(config['layers']['l3_urban'], lat, lon)
 
-# Compute
-radio_map = aggregator.aggregate(datetime(2024, 1, 1, 12, 0, 0))
+# 计算
+agg = RadioMapAggregator(l1, l2, l3)
+ctx = LayerContext.from_any({'incident_dir': config['layers']['l3_urban']['incident_dir']})
+composite = agg.aggregate(lat, lon, timestamp=datetime(2025, 1, 1, 6, 0, 0), context=ctx)
 
-# Visualize
-plot_radio_map(radio_map, title="My Radio Map", output_file="my_map.png")
+print(f"Shape: {composite.shape}, Range: {composite.min():.1f}~{composite.max():.1f} dB")
 ```
 
-## Understanding the Output
+## 输出文件
 
-After running a simulation, you'll find:
-
-- **PNG images**: Visual representations of radio maps
-- **NPY files**: Raw numpy arrays for further processing
-- **Comparison plots**: Side-by-side layer visualizations
-
-### Reading Output Files
-
-```python
-import numpy as np
-import matplotlib.pyplot as plt
-
-# Load composite map
-composite = np.load('output/composite_0000.npy')
-
-# Print statistics
-print(f"Min loss: {np.min(composite):.2f} dB")
-print(f"Max loss: {np.max(composite):.2f} dB")
-print(f"Mean loss: {np.mean(composite):.2f} dB")
-
-# Plot
-plt.imshow(composite, cmap='viridis')
-plt.colorbar(label='Loss (dB)')
-plt.title('Radio Map')
-plt.show()
+```
+output/
+├── composite_0000.png   # 复合无线电地图
+├── composite_0000.npy   # numpy 数组（可编程读取）
+├── l1_macro_0000.png    # L1 宏观层
+├── l2_topo_0000.png     # L2 地形层
+├── l3_urban_0000.png    # L3 城市层
+└── comparison_0000.png  # 四层对比图
 ```
 
-## Customizing Your Simulation
+## 自定义配置
 
-### Change Location
-
-Edit `configs/mission_config.yaml`:
+编辑 `configs/mission_config.yaml`：
 
 ```yaml
+# 修改仿真中心
 origin:
-  latitude: 40.7128   # New York
-  longitude: -74.0060
-```
+  latitude: 34.3416
+  longitude: 108.9398
 
-### Change Frequency
-
-```yaml
-rf:
-  frequency_ghz: 12.0  # Ku-band
-```
-
-### Change Time Range
-
-```yaml
+# 修改时间范围
 time:
-  start: "2024-06-01T00:00:00"
-  end: "2024-06-01T12:00:00"
-  step_hours: 1
-```
+  start: "2025-01-01T00:00:00"
+  end: "2025-01-01T23:00:00"
+  step_hours: 6
 
-### Enable/Disable Layers
-
-```yaml
+# 启用/禁用层
 layers:
   l1_macro:
     enabled: true
   l2_topo:
-    enabled: false  # Disable terrain layer
+    enabled: true
   l3_urban:
     enabled: true
 ```
 
-## Next Steps
+## 数据依赖
 
-1. **Explore examples**: Check `examples/` directory for more usage patterns
-2. **Read documentation**: See `docs/` for detailed architecture and API reference
-3. **Add your data**: Place TLE, DEM, or building data in `data/` directories
-4. **Run tests**: `pytest tests/` to verify everything works
-5. **Customize layers**: Modify layer implementations in `src/layers/`
+| 层 | 数据 | 必需 |
+|----|------|------|
+| L1 | TLE 文件 (`data/2025_0101.tle`) | 是 |
+| L1 | IONEX (`data/l1_space/data/*.INX.gz`) | 否（回退到默认 TEC） |
+| L1 | ERA5 (`data/l1_space/data/*.nc`) | 否（回退到简化模型） |
+| L2 | DEM GeoTIFF (`data/l2_topo/全国DEM数据.tif`) | 否（无文件返回零损耗） |
+| L3 | Tile cache (`data/l3_urban/xian/tiles_60/`) | 是（需预构建） |
 
-## Common Issues
+## 常见问题
 
-### Import Errors
-
-If you get import errors, make sure you're running from the project root:
-
-```bash
-cd /path/to/SG-RM
-python main.py
-```
-
-### Missing Dependencies
-
-Install all required packages:
+**PROJ 库冲突警告**：如果出现 `proj.db contains DATABASE.LAYOUT.VERSION.MINOR` 警告，设置环境变量：
 
 ```bash
-pip install -r requirements.txt
+export PROJ_DATA=$(python -c "import pyproj; print(pyproj.datadir.get_data_dir())")
 ```
 
-### No Output Generated
-
-Check that the output directory exists and is writable:
-
-```bash
-mkdir -p output
-python main.py
-```
-
-## Getting Help
-
-- Check the [README](README.md) for overview
-- Read [Architecture Guide](docs/architecture.md) for design details
-- Review [examples](examples/) for usage patterns
-- Open an issue on GitHub for bugs or questions
-
-## What's Next?
-
-Now that you have a working simulation:
-
-1. Try different locations and frequencies
-2. Add your own data sources (TLE, DEM, buildings)
-3. Modify physical models in `src/core/physics.py`
-4. Extend layers with new features
-5. Create time-series animations
-
-Happy simulating! 🛰️📡
+**L3 tile cache 不存在**：需要先构建，参见 `data/l3_urban/README.md`。

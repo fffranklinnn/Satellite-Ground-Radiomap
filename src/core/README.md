@@ -15,7 +15,8 @@
 | `pixel_to_latlon(i, j)` | 像素坐标 → (lat, lon) |
 | `latlon_to_pixel(lat, lon)` | (lat, lon) → 像素坐标 |
 | `get_distance_matrix()` | 返回每个像素到原点的距离矩阵（km），256×256 |
-| `get_latlon_grids()` | 返回完整的纬度/经度网格数组 |
+| `get_pixel_centers()` | 返回完整像素中心坐标数组（shape: `N×N×2`） |
+| `is_within_bounds(i, j)` | 判断像素索引是否在网格范围内 |
 
 网格以 `origin_lat/lon` 为中心，覆盖范围和分辨率由 `coverage_km` 和 `resolution_m` 决定。
 
@@ -43,7 +44,7 @@ FSPL(dB) = 20·log₁₀(d) + 20·log₁₀(f) + 92.45
 大气衰减，ITU-R P.618 简化模型。
 
 - 仰角 ≤ 0° 时返回 999 dB（地平线以下）
-- 含简单雨衰项：`0.01 · (f/10)² · R · (1/sin(el))`
+- 含频率/极化相关雨衰与斜路径修正（内部调用 `rain_attenuation_slant_path_db()`）
 
 ---
 

@@ -1,24 +1,29 @@
 """Unit tests for engine.aggregator module."""
 
-import pytest
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
+
 from src.layers.l1_macro import L1MacroLayer
-from src.layers.l3_urban import L3UrbanLayer
 from src.engine.aggregator import RadioMapAggregator
+
+ROOT = Path(__file__).resolve().parents[2]
+TLE_PATH = ROOT / "data" / "2025_0101.tle"
+
+
+def _l1_config() -> dict:
+    return {
+        "grid_size": 256,
+        "coverage_km": 256.0,
+        "resolution_m": 1000.0,
+        "frequency_ghz": 10.0,
+        "tle_file": str(TLE_PATH),
+    }
 
 
 def test_aggregator_initialization():
     """Test aggregator initialization."""
-    l1_config = {
-        'grid_size': 256,
-        'coverage_km': 256.0,
-        'resolution_m': 1000.0,
-        'frequency_ghz': 10.0,
-        'satellite_altitude_km': 550.0
-    }
-
-    l1_layer = L1MacroLayer(l1_config, origin_lat=39.9, origin_lon=116.4)
+    l1_layer = L1MacroLayer(_l1_config(), origin_lat=39.9, origin_lon=116.4)
     aggregator = RadioMapAggregator(l1_layer=l1_layer)
 
     assert aggregator.l1_layer is not None
@@ -27,19 +32,11 @@ def test_aggregator_initialization():
 
 def test_aggregator_compute():
     """Test aggregator compute method."""
-    l1_config = {
-        'grid_size': 256,
-        'coverage_km': 256.0,
-        'resolution_m': 1000.0,
-        'frequency_ghz': 10.0,
-        'satellite_altitude_km': 550.0
-    }
-
-    l1_layer = L1MacroLayer(l1_config, origin_lat=39.9, origin_lon=116.4)
+    l1_layer = L1MacroLayer(_l1_config(), origin_lat=39.9, origin_lon=116.4)
     aggregator = RadioMapAggregator(l1_layer=l1_layer)
 
-    timestamp = datetime(2024, 1, 1, 12, 0, 0)
-    composite_map = aggregator.aggregate(timestamp)
+    timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    composite_map = aggregator.aggregate(39.9, 116.4, timestamp=timestamp)
 
     # Check output shape
     assert composite_map.shape == (256, 256)
@@ -50,20 +47,12 @@ def test_aggregator_compute():
 
 def test_aggregator_layer_contributions():
     """Test getting individual layer contributions."""
-    l1_config = {
-        'grid_size': 256,
-        'coverage_km': 256.0,
-        'resolution_m': 1000.0,
-        'frequency_ghz': 10.0,
-        'satellite_altitude_km': 550.0
-    }
-
-    l1_layer = L1MacroLayer(l1_config, origin_lat=39.9, origin_lon=116.4)
+    l1_layer = L1MacroLayer(_l1_config(), origin_lat=39.9, origin_lon=116.4)
     aggregator = RadioMapAggregator(l1_layer=l1_layer)
 
-    timestamp = datetime(2024, 1, 1, 12, 0, 0)
-    contributions = aggregator.get_layer_contributions(timestamp)
+    timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    contributions = aggregator.get_layer_contributions(39.9, 116.4, timestamp=timestamp)
 
-    assert 'l1' in contributions
-    assert 'composite' in contributions
-    assert contributions['l1'].shape == (256, 256)
+    assert "l1" in contributions
+    assert "composite" in contributions
+    assert contributions["l1"].shape == (256, 256)

@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional, Union
 import numpy as np
 
 from .base import BaseLayer, LayerContext
+from ..core.physics import SPEED_OF_LIGHT
 
 
 class L2TopoLayer(BaseLayer):
@@ -46,6 +47,7 @@ class L2TopoLayer(BaseLayer):
     DEM_LAT_MIN, DEM_LAT_MAX = 15.0, 57.0   # National DEM coverage (全国DEM数据.tif)
     DEM_LON_MIN, DEM_LON_MAX = 73.0, 139.0  # National DEM coverage
     DIFFRACTION_LOSS_DB = 20.0
+    MAX_DIFFRACTION_LOSS_DB = 60.0
 
     def __init__(self,
                  config: Union[Dict[str, Any], str],
@@ -72,6 +74,7 @@ class L2TopoLayer(BaseLayer):
             self.freq_hz           = float(freq_hz) if freq_hz is not None else 2.0e9
             self.sat_elevation_deg = float(sat_elevation_deg) if sat_elevation_deg is not None else 45.0
             self.sat_azimuth_deg   = float(sat_azimuth_deg)
+            self.satellite_altitude_km = 550.0
             base_config = {"grid_size": 256, "coverage_km": 25.6, "resolution_m": 100.0}
             origin_lat = origin_lat or 34.0
             origin_lon = origin_lon or 108.0
@@ -80,6 +83,7 @@ class L2TopoLayer(BaseLayer):
             self.freq_hz           = float(config.get("frequency_ghz", 2.0)) * 1e9
             self.sat_elevation_deg = float(config.get("satellite_elevation_deg", 45.0))
             self.sat_azimuth_deg   = float(config.get("satellite_azimuth_deg", 180.0))
+            self.satellite_altitude_km = float(config.get("satellite_altitude_km", 550.0))
             base_config            = config
 
         super().__init__(base_config, origin_lat, origin_lon)
@@ -140,18 +144,43 @@ class L2TopoLayer(BaseLayer):
             self.logger.warning("[L2] No DEM file configured — returning zero loss.")
             return np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
 
+        ctx = LayerContext.from_any(context).merged_with_kwargs(kwargs)
+        sat_elevation_deg = float(ctx.extras.get("satellite_elevation_deg", self.sat_elevation_deg))
+        sat_azimuth_deg = float(ctx.extras.get("satellite_azimuth_deg", self.sat_azimuth_deg))
+        sat_slant_range_km = ctx.extras.get("satellite_slant_range_km")
+        sat_altitude_km = float(ctx.extras.get("satellite_altitude_km", self.satellite_altitude_km))
+        if sat_slant_range_km is None:
+            sat_slant_range_km = self._estimate_slant_range_km(sat_elevation_deg, sat_altitude_km)
+        sat_slant_range_m = max(float(sat_slant_range_km) * 1000.0, 1.0)
+
         self.logger.info(f"[L2] compute @ ({origin_lat:.4f}N, {origin_lon:.4f}E)")
         self._validate_bounds(origin_lat, origin_lon)
 
-        dem_grid       = self._load_dem_patch(origin_lat, origin_lon)
-        occlusion_mask = self._compute_occlusion_vectorized(dem_grid)
-        loss_db        = self._apply_diffraction_loss(dem_grid, occlusion_mask)
+        dem_grid = self._load_dem_patch(origin_lat, origin_lon)
+        occlusion_mask, excess_height_m, obstacle_distance_m = self._compute_occlusion_vectorized(
+            dem_grid,
+            sat_elevation_deg=sat_elevation_deg,
+            sat_azimuth_deg=sat_azimuth_deg,
+            return_profile=True,
+        )
+        loss_db = self._apply_diffraction_loss(
+            dem=dem_grid,
+            mask=occlusion_mask,
+            excess_height_m=excess_height_m,
+            obstacle_distance_m=obstacle_distance_m,
+            sat_slant_range_m=sat_slant_range_m,
+        )
 
         self.logger.info(
             f"[L2] Done | occluded={occlusion_mask.mean()*100:.1f}% | "
             f"loss={loss_db.min():.1f}~{loss_db.max():.1f} dB"
         )
         return loss_db
+
+    def _estimate_slant_range_km(self, sat_elevation_deg: float, sat_altitude_km: float) -> float:
+        """Estimate slant range from altitude and elevation for fallback use."""
+        sin_el = np.sin(np.radians(max(float(sat_elevation_deg), 1.0)))
+        return float(sat_altitude_km / max(sin_el, 1e-3))
 
     def _load_dem_patch(self, origin_lat: float, origin_lon: float) -> np.ndarray:
         """Read only the 25.6 km tile; resample 30 m -> 100 m/px on-the-fly."""
@@ -185,37 +214,125 @@ class L2TopoLayer(BaseLayer):
             data[data == nodata] = 0.0
         return data
 
-    def _compute_occlusion_vectorized(self, dem: np.ndarray) -> np.ndarray:
+    def _compute_occlusion_vectorized(self,
+                                      dem: np.ndarray,
+                                      sat_elevation_deg: Optional[float] = None,
+                                      sat_azimuth_deg: Optional[float] = None,
+                                      return_profile: bool = False):
         """
-        Vectorised LOS occlusion (no Python loops).
+        Vectorised LOS occlusion with arbitrary azimuth directional scan.
 
-        V1.0: satellite assumed due south (row=0 direction).
-        V2.0 TODO: trace along true azimuth.
-
-        Algorithm:
-            virtual_h[k] = h[k] + k * step * tan(sat_elev)
-            occluded[i]  = max(virtual_h[0..i-1]) > virtual_h[i]
+        The DEM is indexed as row=S->N, col=W->E. We convert satellite azimuth
+        (where the satellite appears in the sky) to incoming-wave scan azimuth:
+            scan_az = (satellite_azimuth_deg + 180) % 360
+        Then sweep each projected ray from the wavefront side using a per-ray
+        cumulative horizon in the transformed coordinate system.
         """
-        tan_elev = np.tan(np.radians(self.sat_elevation_deg))
-        row_idx  = np.arange(dem.shape[0], dtype=np.float32).reshape(-1, 1)
-        virtual_h = dem + row_idx * self.RESOLUTION_M * tan_elev
+        if dem.ndim != 2:
+            raise ValueError("DEM input must be a 2-D array.")
 
-        cummax = np.maximum.accumulate(virtual_h, axis=0)
-        prev_cummax = np.empty_like(cummax)
-        prev_cummax[0, :]  = -np.inf
-        prev_cummax[1:, :] = cummax[:-1, :]
+        el_deg = self.sat_elevation_deg if sat_elevation_deg is None else float(sat_elevation_deg)
+        az_deg = self.sat_azimuth_deg if sat_azimuth_deg is None else float(sat_azimuth_deg)
 
-        return prev_cummax > virtual_h
+        tan_elev = float(np.tan(np.radians(el_deg)))
+        if tan_elev <= 0.0:
+            return np.zeros_like(dem, dtype=bool)
+
+        # azimuth is where satellite is seen from ground; incoming scan is opposite.
+        scan_az_deg = (az_deg + 180.0) % 360.0
+        az_rad = np.deg2rad(scan_az_deg)
+        ux = float(np.sin(az_rad))  # east component
+        uy = float(np.cos(az_rad))  # north component
+
+        rows, cols = dem.shape
+        x = (np.arange(cols, dtype=np.float32) + 0.5) * self.RESOLUTION_M
+        y = (np.arange(rows, dtype=np.float32) + 0.5) * self.RESOLUTION_M
+        xx, yy = np.meshgrid(x, y)
+
+        # Ray-aligned coordinates: u along scan direction, v groups parallel rays.
+        u = xx * ux + yy * uy
+        v = xx * (-uy) + yy * ux
+        ray_id = np.floor(v / self.RESOLUTION_M).astype(np.int32)
+
+        u_flat = u.ravel()
+        ray_flat = ray_id.ravel()
+        h_flat = dem.ravel().astype(np.float32, copy=False)
+        order = np.lexsort((u_flat, ray_flat))
+
+        blocked = np.zeros_like(h_flat, dtype=bool)
+        excess_height = np.zeros_like(h_flat, dtype=np.float32)
+        obstacle_distance = np.zeros_like(h_flat, dtype=np.float32)
+        current_ray = np.int32(-2**31)
+        max_virtual = -np.inf
+        max_u = 0.0
+        eps = 1e-6
+
+        for idx in order:
+            rid = ray_flat[idx]
+            if rid != current_ray:
+                current_ray = rid
+                max_virtual = -np.inf
+                max_u = 0.0
+
+            ui = float(u_flat[idx])
+            virtual_h = float(h_flat[idx]) + tan_elev * ui
+            if max_virtual > virtual_h + eps:
+                blocked[idx] = True
+                excess_height[idx] = float(max_virtual - virtual_h)
+                obstacle_distance[idx] = max(float(ui - max_u), self.RESOLUTION_M)
+
+            if virtual_h > max_virtual:
+                max_virtual = virtual_h
+                max_u = ui
+
+        blocked_grid = blocked.reshape(dem.shape)
+        if not return_profile:
+            return blocked_grid
+
+        return (
+            blocked_grid,
+            excess_height.reshape(dem.shape),
+            obstacle_distance.reshape(dem.shape),
+        )
 
     def _apply_diffraction_loss(self,
                                 dem: np.ndarray,
-                                mask: np.ndarray) -> np.ndarray:
+                                mask: np.ndarray,
+                                excess_height_m: Optional[np.ndarray] = None,
+                                obstacle_distance_m: Optional[np.ndarray] = None,
+                                sat_slant_range_m: Optional[float] = None) -> np.ndarray:
         """
-        V1.0: fixed 20 dB for occluded pixels.
-        V2.0 TODO: ITU-R P.526 Fresnel-Kirchhoff knife-edge model.
+        Knife-edge diffraction loss model.
+
+        When occlusion profile is unavailable, fall back to fixed loss.
         """
+        if excess_height_m is None or obstacle_distance_m is None:
+            loss = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
+            loss[mask] = self.DIFFRACTION_LOSS_DB
+            return loss
+
+        d1 = np.maximum(obstacle_distance_m.astype(np.float64), self.RESOLUTION_M)
+        if sat_slant_range_m is None or sat_slant_range_m <= 0.0:
+            d2 = np.full_like(d1, 550_000.0, dtype=np.float64)
+        else:
+            d2 = np.full_like(d1, float(sat_slant_range_m), dtype=np.float64)
+
+        lam = SPEED_OF_LIGHT / max(self.freq_hz, 1.0)
+        h = np.maximum(excess_height_m.astype(np.float64), 0.0)
+
+        # ITU-R knife-edge diffraction parameter:
+        # v = h * sqrt( 2*(d1+d2) / (lambda*d1*d2) )
+        v = h * np.sqrt((2.0 * (d1 + d2)) / np.maximum(lam * d1 * d2, 1e-12))
+        term = np.sqrt((v - 0.1) ** 2 + 1.0) + v - 0.1
+        knife_edge_loss = np.where(
+            v <= -0.78,
+            0.0,
+            6.9 + 20.0 * np.log10(np.maximum(term, 1e-8))
+        )
+        knife_edge_loss = np.clip(knife_edge_loss, 0.0, self.MAX_DIFFRACTION_LOSS_DB)
+
         loss = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
-        loss[mask] = self.DIFFRACTION_LOSS_DB
+        loss[mask] = knife_edge_loss[mask].astype(np.float32)
         return loss
 
     def _validate_bounds(self, origin_lat: float, origin_lon: float):

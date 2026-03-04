@@ -1,213 +1,61 @@
-# SG-MRM Project Framework - Summary
+# SG-MRM Project Summary
 
-This document summarizes the complete initial code framework created for the SG-MRM project.
+本文件是当前仓库（`Satellite-Ground-Radiomap`）的实现快照，重点同步“代码能力”和“数据现状”。
 
-## Project Statistics
+## 当前实现范围
 
-- **Total Files Created**: 40+
-- **Python Modules**: 15
-- **Test Files**: 5
-- **Documentation Files**: 8
-- **Example Scripts**: 2
-- **Configuration Files**: 2
+| 层 | 文件 | 当前状态 | 核心能力 |
+|----|------|----------|----------|
+| L1 宏观层 | `src/layers/l1_macro.py` | ✅ 已实现 | TLE 选星、FSPL、相控阵增益、极化损耗、IONEX/ERA5 加载 |
+| L2 地形层 | `src/layers/l2_topo.py` | ✅ 已实现 | DEM 窗口读取、LOS 遮挡判定、地形损耗栅格 |
+| L3 城市层 | `src/layers/l3_urban.py` | ✅ 已实现 | Tile cache 加载、方向性 NLoS 扫描、占用损耗 |
+| 聚合引擎 | `src/engine/aggregator.py` | ✅ 已实现 | L1/L2/L3 多尺度插值与 dB 合成 |
 
-## Directory Structure
+## 数据现状（仓库内）
 
-```
-SG-RM/
-├── configs/              # Configuration files
-├── data/                 # Data sources (with subdirectories)
-├── docs/                 # Documentation
-├── examples/             # Usage examples
-├── src/                  # Source code
-│   ├── core/            # Grid and physics utilities
-│   ├── layers/          # L1/L2/L3 implementations
-│   ├── engine/          # Aggregation engine
-│   └── utils/           # Utilities (logging, plotting, performance)
-├── tests/               # Unit tests
-├── main.py              # Entry point
-├── setup.py             # Package setup
-├── requirements.txt     # Dependencies
-├── LICENSE              # MIT License
-├── README.md            # Main documentation
-├── QUICKSTART.md        # Quick start guide
-└── .gitignore           # Git ignore rules
-```
+| 数据类型 | 路径 | 说明 |
+|---------|------|------|
+| TLE | `data/2025_0101.tle` | Starlink 星座轨道数据（2025-01-01） |
+| IONEX | `data/l1_space/data/*.INX.gz` | 电离层 TEC |
+| ERA5 | `data/l1_space/data/*.nc` | pressure-level 数据（q/z/r/t） |
+| DEM | `data/l2_topo/全国DEM数据.tif` | L2 地形遮挡输入 |
+| 建筑原始 shp | `data/l3_urban/shanxisheng/陕西省/*.shp` | 陕西省多城市原始建筑矢量 |
+| 建筑缓存 | `data/l3_urban/xian/tiles_60/` | 当前可直接运行的西安 L3 tile cache |
 
-## Core Components
+说明：L3 的陕西省原始建筑数据覆盖范围大于当前可直接运行的 cache 范围。若扩展到其他城市，需先构建对应 tile cache。
 
-### 1. Grid System (src/core/grid.py)
-- 256×256 grid coordinate system
-- Geographic to pixel coordinate transformations
-- Distance calculations
+## 目录概览
 
-### 2. Physics Utilities (src/core/physics.py)
-- Free Space Path Loss (FSPL)
-- Atmospheric attenuation (ITU-R P.618)
-- Ionospheric effects (ITU-R P.531)
-- Polarization loss calculations
-
-### 3. Layer Architecture
-
-**Base Layer (src/layers/base.py)**
-- Abstract base class for all layers
-- Standardized `.compute()` interface
-- Configuration validation
-
-**L1 Macro Layer (src/layers/l1_macro.py)**
-- Coverage: 256 km × 256 km
-- Resolution: 1000 m/pixel
-- Satellite positioning and atmospheric effects
-
-**L2 Terrain Layer (src/layers/l2_topo.py)**
-- Coverage: 25.6 km × 25.6 km
-- Resolution: 100 m/pixel
-- DEM-based terrain obstruction (placeholder for V2.0)
-
-**L3 Urban Layer (src/layers/l3_urban.py)**
-- Coverage: 256 m × 256 m
-- Resolution: 1 m/pixel
-- Building shadows and ray tracing (placeholder for V2.0)
-
-### 4. Aggregation Engine (src/engine/aggregator.py)
-- Combines L1/L2/L3 outputs
-- Interpolation between different scales
-- dB domain addition
-
-### 5. Utilities
-
-**Logger (src/utils/logger.py)**
-- Consistent logging across modules
-- Simulation progress tracking
-
-**Plotter (src/utils/plotter.py)**
-- Radio map visualization
-- Layer comparison plots
-- Animation frame generation
-
-**Performance (src/utils/performance.py)**
-- Timing and profiling tools
-- Performance statistics
-
-## Configuration
-
-**mission_config.yaml**
-- Geographic origin
-- RF parameters (frequency, power, polarization)
-- Satellite parameters
-- Time range and resolution
-- Layer enable/disable flags
-- Output settings
-
-## Testing
-
-Unit tests for:
-- Grid coordinate transformations
-- Physics calculations
-- Layer computations
-- Aggregation engine
-
-Run tests: `pytest tests/`
-
-## Examples
-
-1. **basic_usage.py**: Simple example showing core functionality
-2. **v1_static_link.py**: V1.0 milestone demonstration
-
-## Documentation
-
-- **README.md**: Project overview and installation
-- **QUICKSTART.md**: 5-minute getting started guide
-- **docs/architecture.md**: Detailed architecture description
-- **docs/README.md**: Documentation index
-- **data/README.md**: Data sources guide
-- **configs/README.md**: Configuration guide
-- **examples/README.md**: Examples guide
-
-## Key Features
-
-✓ **Modular Design**: High cohesion, low coupling
-✓ **Standardized Interface**: All layers implement `.compute()`
-✓ **Well Documented**: Comprehensive docstrings and guides
-✓ **Tested**: Unit tests for core functionality
-✓ **Extensible**: Easy to add new layers and models
-✓ **Professional**: Follows Python best practices
-✓ **Git Ready**: Complete with .gitignore and LICENSE
-
-## Development Phases
-
-### V1.0 (Current Framework)
-- ✓ Basic satellite positioning
-- ✓ Simple atmospheric model
-- ✓ Building shadow placeholders
-- ✓ Layer aggregation
-- ✓ Visualization tools
-
-### V2.0 (Planned)
-- TLE-based orbit propagation
-- Full ITU-R atmospheric models
-- DEM terrain processing
-- GPU ray tracing
-- Time-series animation
-- Real-time weather integration
-
-## Usage
-
-### Quick Start
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run example
-python examples/basic_usage.py
-
-# Run with config
-python main.py --config configs/mission_config.yaml
+```text
+Satellite-Ground-Radiomap/
+├── configs/               # 配置文件
+├── data/                  # 原始数据与预处理缓存
+├── docs/                  # 说明文档
+├── examples/              # 示例脚本
+├── scripts/               # 批处理/可视化脚本
+├── src/                   # 核心实现
+│   ├── core/
+│   ├── layers/
+│   ├── engine/
+│   └── utils/
+├── tests/
+├── main.py
+└── README.md
 ```
 
-### Programmatic Usage
-```python
-from src.layers import L1MacroLayer
-from src.engine import RadioMapAggregator
+## 常用入口
 
-# Initialize
-l1_layer = L1MacroLayer(config, lat, lon)
-aggregator = RadioMapAggregator(l1_layer=l1_layer)
+- 主文档：`README.md`
+- 快速开始：`docs/QUICKSTART.md`
+- 数据说明：`data/README.md`
+- L3 数据与缓存构建：`data/l3_urban/README.md`
+- 脚本说明：`scripts/README.md`
 
-# Compute
-radio_map = aggregator.aggregate(timestamp)
-```
+## 已知边界
 
-## Next Steps
+- 仓库中“现成可跑”的 L3 cache 主要是西安；陕西省其他城市需先从原始 shp 构建 cache。
+- 年尺度/省尺度批量实验可运行，但计算量大，建议按时间片和区域分批执行并使用进度监控脚本。
 
-1. **Add Real Data**: Place TLE, DEM, building data in `data/` directories
-2. **Customize Physics**: Modify models in `src/core/physics.py`
-3. **Extend Layers**: Add new features to layer implementations
-4. **Run Simulations**: Generate radio maps for your use case
-5. **Contribute**: Add new functionality and submit PRs
+## 更新日期
 
-## GitHub Ready
-
-This framework is ready for immediate upload to GitHub:
-
-```bash
-git init
-git add .
-git commit -m "Initial commit: SG-MRM framework v0.1.0"
-git remote add origin https://github.com/yourusername/SG-RM.git
-git push -u origin main
-```
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Contact
-
-For questions and support, open an issue on GitHub.
-
----
-
-**Framework Version**: 0.1.0
-**Created**: 2024
-**Status**: Ready for Development
+- Last updated: 2026-03-03

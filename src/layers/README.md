@@ -40,7 +40,7 @@ def compute(self, origin_lat=None, origin_lon=None,
 **数据依赖：**
 - `data/2025_0101.tle` — Starlink TLE（必需）
 - `data/l1_space/data/*.INX.gz` — IONEX TEC（可选，回退到默认 10 TECU）
-- `data/l1_space/data/*.nc` — ERA5 IWV（可选，回退到简化大气模型）
+- `data/l1_space/data/*.nc` — ERA5 pressure-level 数据（q/z/r/t，可选，回退到简化大气模型）
 
 ---
 
@@ -77,13 +77,14 @@ l2_topo:
 - NLoS 像素 20 dB + 建筑占用像素 30 dB 损耗
 
 **数据依赖：**
-- `data/l3_urban/xian/tiles_60/` — tile cache（由 `tools/build_l3_tile_cache.py` 构建）
+- `data/l3_urban/shanxisheng/陕西省/*.shp` — 陕西省原始建筑矢量
+- `data/l3_urban/xian/tiles_60/` — 可直接运行的西安 tile cache（由 `tools/build_l3_tile_cache.py` 构建）
 
 **Tile cache 构建流程：**
 ```bash
 # 1. 预处理建筑 shapefile → parquet
 python tools/preprocess_buildings_catalog.py \
-  --input-root data/l3_urban/shanxisheng/ \
+  --input-root data/l3_urban/shanxisheng/陕西省 \
   --output data/l3_urban/xian/catalog/buildings_xian.parquet
 
 # 2. 构建 tile cache
@@ -92,6 +93,8 @@ python tools/build_l3_tile_cache.py \
   --tile-list data/l3_urban/xian/tile_list_xian_60.csv \
   --output-root data/l3_urban/xian/tiles_60/
 ```
+
+说明：仓库当前现成 cache 主要是西安。若需要陕西省其他城市，需要从 `shanxisheng/陕西省/` 原始 shp 生成对应城市的 tile list 与 tile cache。
 
 ---
 

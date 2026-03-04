@@ -7,6 +7,7 @@ from .logger import setup_logger, get_logger, SimulationLogger
 from .plotter import (
     plot_radio_map,
     plot_layer_comparison,
+    plot_full_radiomap_paper,
     export_radio_map_png,
     plot_time_series,
     create_animation_frames
@@ -22,12 +23,14 @@ from .performance import (
 __all__ = [
     'IonexLoader',
     'Era5Loader',
+    'load_era5',
     'TleLoader',
     'setup_logger',
     'get_logger',
     'SimulationLogger',
     'plot_radio_map',
     'plot_layer_comparison',
+    'plot_full_radiomap_paper',
     'export_radio_map_png',
     'plot_time_series',
     'create_animation_frames',

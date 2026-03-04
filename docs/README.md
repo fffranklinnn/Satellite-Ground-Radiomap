@@ -1,60 +1,34 @@
 # Documentation
 
-This directory contains comprehensive documentation for the SG-MRM project.
+本目录包含 SG-MRM 的核心说明文档。
 
 ## Available Documentation
 
+### [Quick Start](QUICKSTART.md)
+
+快速运行与常见问题，适合先确认环境和数据依赖是否完整。
+
 ### [Architecture Guide](architecture.md)
 
-Detailed description of the system architecture, design principles, and layer implementations.
+系统架构、分层设计和核心数据流说明。
 
-### [API Reference](api_reference.md)
+### [Project Summary](PROJECT_SUMMARY.md)
 
-Complete API documentation for all modules, classes, and functions.
-
-### [Development Guide](development_guide.md)
-
-Guide for developers contributing to the project, including coding standards and testing procedures.
+当前仓库实现能力与数据现状快照（含 L3 原始 shp 与 cache 关系）。
 
 ## Quick Links
 
 - [Main README](../README.md)
+- [Chinese README](../README_CN.md)
 - [Configuration Guide](../configs/README.md)
 - [Data Guide](../data/README.md)
-- [Examples](../examples/README.md)
+- [Scripts Guide](../scripts/README.md)
 
-## Additional Resources
+## External References
 
-### ITU-R Recommendations
-
-- [ITU-R P.618](https://www.itu.int/rec/R-REC-P.618/): Propagation data and prediction methods
-- [ITU-R P.531](https://www.itu.int/rec/R-REC-P.531/): Ionospheric propagation data
-- [ITU-R P.526](https://www.itu.int/rec/R-REC-P.526/): Propagation by diffraction
-
-### External Documentation
-
+- [ITU-R P.618](https://www.itu.int/rec/R-REC-P.618/)
+- [ITU-R P.531](https://www.itu.int/rec/R-REC-P.531/)
+- [ITU-R P.526](https://www.itu.int/rec/R-REC-P.526/)
 - [NumPy Documentation](https://numpy.org/doc/)
 - [Matplotlib Documentation](https://matplotlib.org/stable/contents.html)
 - [PyYAML Documentation](https://pyyaml.org/wiki/PyYAMLDocumentation)
-
-## Contributing to Documentation
-
-When adding new features, please update the relevant documentation:
-
-1. Add docstrings to all new functions and classes
-2. Update API reference if needed
-3. Add examples for new functionality
-4. Update architecture guide for structural changes
-
-## Building Documentation
-
-For generating HTML documentation (future):
-
-```bash
-# Install sphinx
-pip install sphinx sphinx-rtd-theme
-
-# Build documentation
-cd docs
-make html
-```

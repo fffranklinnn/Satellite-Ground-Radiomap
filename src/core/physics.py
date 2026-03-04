@@ -15,6 +15,33 @@ import numpy as np
 SPEED_OF_LIGHT = 2.998e8       # m/s
 BOLTZMANN_K    = 1.380649e-23  # J/K
 
+# Approximate ITU-R P.838 coefficient tables (frequency in GHz).
+# Used for a frequency/polarization-aware rain attenuation model.
+_RAIN_COEFF_FREQ_GHZ = np.array(
+    [1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0, 30.0, 40.0, 50.0],
+    dtype=float
+)
+_RAIN_KH = np.array(
+    [3.87e-5, 1.54e-4, 6.50e-4, 1.75e-3, 3.50e-3, 6.20e-3, 1.01e-2,
+     1.88e-2, 7.51e-2, 1.87e-1, 3.50e-1, 5.36e-1],
+    dtype=float
+)
+_RAIN_AH = np.array(
+    [0.912, 0.963, 1.121, 1.241, 1.320, 1.276, 1.217, 1.154,
+     1.099, 1.021, 0.960, 0.900],
+    dtype=float
+)
+_RAIN_KV = np.array(
+    [3.52e-5, 1.38e-4, 5.90e-4, 1.55e-3, 3.15e-3, 5.65e-3, 9.00e-3,
+     1.68e-2, 6.30e-2, 1.67e-1, 3.10e-1, 4.80e-1],
+    dtype=float
+)
+_RAIN_AV = np.array(
+    [0.880, 0.923, 1.075, 1.190, 1.265, 1.230, 1.190, 1.120,
+     1.065, 1.000, 0.940, 0.880],
+    dtype=float
+)
+
 
 def free_space_path_loss(distance_km, frequency_ghz):
     """
@@ -38,6 +65,94 @@ def free_space_path_loss(distance_km, frequency_ghz):
     return fspl_db
 
 
+def _rain_coefficients(frequency_ghz):
+    """Interpolate rain-model k/alpha coefficients at the requested frequency."""
+    freq = np.asarray(frequency_ghz, dtype=float)
+    freq_clip = np.clip(freq, _RAIN_COEFF_FREQ_GHZ[0], _RAIN_COEFF_FREQ_GHZ[-1])
+
+    k_h = np.interp(freq_clip, _RAIN_COEFF_FREQ_GHZ, _RAIN_KH)
+    a_h = np.interp(freq_clip, _RAIN_COEFF_FREQ_GHZ, _RAIN_AH)
+    k_v = np.interp(freq_clip, _RAIN_COEFF_FREQ_GHZ, _RAIN_KV)
+    a_v = np.interp(freq_clip, _RAIN_COEFF_FREQ_GHZ, _RAIN_AV)
+    return k_h, a_h, k_v, a_v
+
+
+def rain_specific_attenuation_db_per_km(frequency_ghz,
+                                        rain_rate_mm_h,
+                                        elevation_angle_deg=45.0,
+                                        polarization_tilt_deg=45.0):
+    """
+    Approximate specific attenuation gamma_R (dB/km) from rain intensity.
+
+    The model is frequency- and polarization-aware (table-interpolated k/alpha).
+    """
+    freq = np.asarray(frequency_ghz, dtype=float)
+    rain = np.asarray(rain_rate_mm_h, dtype=float)
+    el = np.asarray(elevation_angle_deg, dtype=float)
+
+    k_h, a_h, k_v, a_v = _rain_coefficients(freq)
+
+    cos_el_sq = np.cos(np.radians(np.clip(el, 0.0, 90.0))) ** 2
+    cos_2tau = np.cos(2.0 * np.radians(float(polarization_tilt_deg)))
+
+    k = 0.5 * (k_h + k_v + (k_h - k_v) * cos_el_sq * cos_2tau)
+    k = np.maximum(k, 1e-10)
+
+    num = (
+        k_h * a_h + k_v * a_v +
+        (k_h * a_h - k_v * a_v) * cos_el_sq * cos_2tau
+    )
+    alpha = num / (2.0 * k)
+
+    rain_safe = np.maximum(rain, 0.0)
+    return k * np.power(rain_safe, alpha)
+
+
+def rain_attenuation_slant_path_db(elevation_angle_deg,
+                                   frequency_ghz,
+                                   rain_rate_mm_h,
+                                   station_alt_km=0.4,
+                                   rain_height_km=5.0,
+                                   polarization_tilt_deg=45.0):
+    """
+    Approximate slant-path rain attenuation (dB).
+
+    Uses:
+    - frequency/polarization-aware specific attenuation gamma_R (dB/km)
+    - effective slant path with a reduction factor inspired by ITU-R P.618
+    """
+    el = np.asarray(elevation_angle_deg, dtype=float)
+    freq = np.asarray(frequency_ghz, dtype=float)
+    rain = np.asarray(rain_rate_mm_h, dtype=float)
+
+    el_safe = np.clip(el, 0.1, 90.0)
+    sin_el = np.sin(np.radians(el_safe))
+
+    rain_layer_km = max(float(rain_height_km) - float(station_alt_km), 0.1)
+    slant_len_km = rain_layer_km / sin_el
+
+    gamma_r = rain_specific_attenuation_db_per_km(
+        freq,
+        rain,
+        elevation_angle_deg=el_safe,
+        polarization_tilt_deg=polarization_tilt_deg,
+    )
+
+    freq_safe = np.maximum(freq, 1e-3)
+    term = np.maximum(slant_len_km * gamma_r / freq_safe, 0.0)
+    reduction = 1.0 / (
+        1.0 +
+        0.78 * np.sqrt(term) -
+        0.38 * (1.0 - np.exp(-2.0 * slant_len_km))
+    )
+    reduction = np.clip(reduction, 0.05, 1.0)
+
+    attenuation = gamma_r * slant_len_km * reduction
+    attenuation = np.where(rain <= 0.0, 0.0, attenuation)
+    attenuation = np.where(el <= 0.0, 999.0, attenuation)
+    return attenuation
+
+
 def atmospheric_loss(elevation_angle_deg, frequency_ghz, rain_rate_mm_h=0.0):
     """
     Calculate atmospheric attenuation based on ITU-R P.618 (simplified).
@@ -56,23 +171,29 @@ def atmospheric_loss(elevation_angle_deg, frequency_ghz, rain_rate_mm_h=0.0):
     freq = np.asarray(frequency_ghz, dtype=float)
     rain = np.asarray(rain_rate_mm_h, dtype=float)
 
-    # Clamp elevation to avoid division by zero; below 0 → large loss
+    # Clamp elevation to avoid division by zero; below 0 -> large loss
     el_safe = np.clip(el, 0.1, 90.0)
     path_factor = 1.0 / np.sin(np.radians(el_safe))
 
-    zenith_attenuation = 0.1 * (freq / 10.0)
-    atm_loss = zenith_attenuation * path_factor
+    # Baseline gaseous attenuation (clear-sky), frequency dependent.
+    dry_zenith = 0.035 * (freq / 10.0)
+    wet_zenith = 0.012 * (freq / 10.0)
+    atm_loss = (dry_zenith + wet_zenith) * path_factor
 
-    # Simple rain attenuation
-    rain_coeff = 0.01 * (freq / 10.0) ** 2
-    atm_loss = atm_loss + rain_coeff * rain * path_factor
+    # Refined rain component (frequency/polarization/slant-path aware).
+    rain_loss = rain_attenuation_slant_path_db(
+        elevation_angle_deg=el,
+        frequency_ghz=freq,
+        rain_rate_mm_h=rain,
+    )
+    atm_loss = atm_loss + np.clip(rain_loss, 0.0, 300.0)
 
     # Mark below-horizon pixels
     atm_loss = np.where(el <= 0, 999.0, atm_loss)
     return atm_loss
 
 
-def atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2):
+def atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2, rain_rate_mm_h=0.0):
     """
     Improved atmospheric attenuation using ERA5 Integrated Water Vapor.
 
@@ -94,6 +215,7 @@ def atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2):
     el = np.asarray(elevation_angle_deg, dtype=float)
     freq = np.asarray(frequency_ghz, dtype=float)
     iwv = np.asarray(iwv_kg_m2, dtype=float)
+    rain = np.asarray(rain_rate_mm_h, dtype=float)
 
     el_safe = np.clip(el, 5.0, 90.0)
     sin_el = np.sin(np.radians(el_safe))
@@ -104,6 +226,13 @@ def atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2):
     wet_zenith = 0.0173 * iwv * freq_scale
 
     atm_loss = (dry_zenith + wet_zenith) / sin_el
+
+    rain_loss = rain_attenuation_slant_path_db(
+        elevation_angle_deg=el,
+        frequency_ghz=freq,
+        rain_rate_mm_h=rain,
+    )
+    atm_loss = atm_loss + np.clip(rain_loss, 0.0, 300.0)
     atm_loss = np.where(el <= 0, 999.0, atm_loss)
     return atm_loss
 

@@ -117,7 +117,8 @@ def compute_nlos_mask(height_m: np.ndarray, incident_dir: Any) -> np.ndarray:
 
     u = xx * hx + yy * hy
     v = xx * (-hy) + yy * hx
-    ray_id = np.rint(v).astype(np.int32)
+    # ray_id = np.rint(v).astype(np.int32)
+    ray_id = np.floor(v).astype(np.int32)
 
     u_flat   = u.ravel()
     ray_flat = ray_id.ravel()

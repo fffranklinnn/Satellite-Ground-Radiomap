@@ -29,6 +29,38 @@ pip install -r requirements.txt
 
 主要依赖：numpy, scipy, matplotlib, pyyaml, skyfield, rasterio, geopandas, shapely, pyproj, pyarrow, pandas
 
+### 可选：PyTorch（GPU 加速）
+
+SG-MRM 当前主体仍是 `numpy/scipy`（CPU 计算）。从工程收益看，建议先做 **局部热点迁移**（优先 L2/L3），不建议一开始整体重写为 PyTorch。
+
+针对 `sgmrm_test`（Python 3.10）和 NVIDIA GPU，可按以下方式安装：
+
+```bash
+conda activate sgmrm_test
+python -m pip install --upgrade pip
+# 对于本项目当前机器环境（Driver 535 / CUDA 12.2），建议使用固定兼容版本：
+python -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+```
+
+安装后验证：
+
+```bash
+python - << 'PY'
+import torch
+print("torch:", torch.__version__)
+print("cuda available:", torch.cuda.is_available())
+print("gpu count:", torch.cuda.device_count())
+if torch.cuda.is_available():
+    print("gpu0:", torch.cuda.get_device_name(0))
+PY
+```
+
+若你已经升级到支持更新 CUDA 轮子的 NVIDIA 驱动，请按 PyTorch 官方选择器给出的最新命令安装（常见为 cu126/cu128/cu130），例如：
+
+```bash
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+```
+
 ## 快速开始
 
 ### 运行完整仿真
@@ -76,7 +108,7 @@ Satellite-Ground-Radiomap/
 │   ├── 2025_0101.tle     # Starlink TLE 轨道数据
 │   ├── l1_space/data/    # IONEX 电离层 + ERA5 气象数据
 │   ├── l2_topo/          # 全国 DEM GeoTIFF
-│   └── l3_urban/         # 建筑 tile cache (H.npy/Occ.npy)
+│   └── l3_urban/         # 原始建筑矢量 + 建筑 tile cache (H.npy/Occ.npy)
 ├── src/
 │   ├── core/             # 网格坐标系统 + RF 物理公式
 │   ├── layers/           # L1/L2/L3 层实现
@@ -98,7 +130,8 @@ Satellite-Ground-Radiomap/
 | IONEX | `data/l1_space/data/*.INX.gz` | UPC GIM 全球 TEC (15 分钟间隔) |
 | ERA5 | `data/l1_space/data/*.nc` | ECMWF 气压层数据 (z/r/q/t) |
 | DEM | `data/l2_topo/全国DEM数据.tif` | 全国 DEM (~30 m 分辨率) |
-| 建筑 | `data/l3_urban/xian/tiles_60/` | 西安市区核心区 1320 tiles (256 m, 1 m/px) |
+| 建筑（原始） | `data/l3_urban/shanxisheng/陕西省/*.shp` | 陕西省多城市原始建筑矢量 |
+| 建筑（缓存） | `data/l3_urban/xian/tiles_60/` | 西安市区核心区 1320 tiles (256 m, 1 m/px) |
 
 ## 性能基准（西安，4 帧全天仿真）
 

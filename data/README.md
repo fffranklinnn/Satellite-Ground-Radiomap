@@ -31,6 +31,10 @@ Data for satellite positioning and atmospheric effects:
   - Parameters: Temperature, pressure, humidity, rain rate
   - Source: [ECMWF](https://www.ecmwf.int/), [NOAA](https://www.noaa.gov/)
 
+Current repository includes practical download scripts:
+- `data/l1_space/data/cds.py` (ERA5 pressure-level via CDS API)
+- `data/l1_space/data/NASAcddis.py` (IONEX daily batch download)
+
 ### L2 Topography Data (`l2_topo/`)
 
 Digital Elevation Model (DEM) data:
@@ -50,6 +54,11 @@ Building and urban structure data:
   - Attributes: Building height, material (optional)
   - Source: [OpenStreetMap](https://www.openstreetmap.org/), local GIS databases
   - Example: `buildings.shp`
+
+Current repository includes Shaanxi-wide raw building shapefiles at:
+- `data/l3_urban/shanxisheng/陕西省/*.shp`
+and Xi'an ready-to-use cache at:
+- `data/l3_urban/xian/tiles_60/`
 
 - **3D City Models** (.obj, .gltf): Detailed 3D urban models (V2.0)
   - Format: OBJ, glTF, or CityGML

@@ -29,6 +29,39 @@ pip install -r requirements.txt
 
 Key dependencies: numpy, scipy, matplotlib, pyyaml, skyfield, rasterio, geopandas, shapely, pyproj, pyarrow, pandas
 
+### Optional: PyTorch (GPU Acceleration)
+
+SG-MRM currently runs mainly on `numpy/scipy` (CPU). For practical speedup, a **targeted** migration is recommended first (L2/L3 hotspots), not a full rewrite.
+
+For `sgmrm_test` (Python 3.10) with NVIDIA GPUs:
+
+```bash
+conda activate sgmrm_test
+python -m pip install --upgrade pip
+# For driver/CUDA environments similar to this project setup (Driver 535 / CUDA 12.2),
+# use a pinned compatible wheel:
+python -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+```
+
+Verify installation:
+
+```bash
+python - << 'PY'
+import torch
+print("torch:", torch.__version__)
+print("cuda available:", torch.cuda.is_available())
+print("gpu count:", torch.cuda.device_count())
+if torch.cuda.is_available():
+    print("gpu0:", torch.cuda.get_device_name(0))
+PY
+```
+
+If you have upgraded to a newer NVIDIA driver that supports newer CUDA wheels, install the latest command from the official selector (often cu126/cu128/cu130):
+
+```bash
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+```
+
 ## Quick Start
 
 ### Run full simulation
@@ -76,7 +109,7 @@ Satellite-Ground-Radiomap/
 │   ├── 2025_0101.tle     # Starlink TLE orbit data
 │   ├── l1_space/data/    # IONEX TEC + ERA5 atmospheric data
 │   ├── l2_topo/          # National DEM GeoTIFF
-│   └── l3_urban/         # Building tile cache (H.npy/Occ.npy)
+│   └── l3_urban/         # Raw building shapefiles + tile cache (H.npy/Occ.npy)
 ├── src/
 │   ├── core/             # Grid coordinate system + RF physics
 │   ├── layers/           # L1/L2/L3 layer implementations
@@ -98,7 +131,8 @@ Satellite-Ground-Radiomap/
 | IONEX | `data/l1_space/data/*.INX.gz` | UPC GIM global TEC (15 min interval) |
 | ERA5 | `data/l1_space/data/*.nc` | ECMWF pressure-level data (z/r/q/t) |
 | DEM | `data/l2_topo/全国DEM数据.tif` | National DEM (~30 m resolution) |
-| Buildings | `data/l3_urban/xian/tiles_60/` | Xi'an urban core, 1320 tiles (256 m, 1 m/px) |
+| Buildings (raw) | `data/l3_urban/shanxisheng/陕西省/*.shp` | Shaanxi-wide source shapefiles (multi-city coverage) |
+| Buildings (cache) | `data/l3_urban/xian/tiles_60/` | Xi'an urban core cache, 1320 tiles (256 m, 1 m/px) |
 
 ## Roadmap
 

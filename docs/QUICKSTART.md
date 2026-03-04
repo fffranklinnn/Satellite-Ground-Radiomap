@@ -101,9 +101,9 @@ layers:
 |----|------|------|
 | L1 | TLE 文件 (`data/2025_0101.tle`) | 是 |
 | L1 | IONEX (`data/l1_space/data/*.INX.gz`) | 否（回退到默认 TEC） |
-| L1 | ERA5 (`data/l1_space/data/*.nc`) | 否（回退到简化模型） |
+| L1 | ERA5 (`data/l1_space/data/*.nc`，pressure-level: q/z/r/t) | 否（回退到简化模型） |
 | L2 | DEM GeoTIFF (`data/l2_topo/全国DEM数据.tif`) | 否（无文件返回零损耗） |
-| L3 | Tile cache (`data/l3_urban/xian/tiles_60/`) | 是（需预构建） |
+| L3 | Tile cache (`data/l3_urban/xian/tiles_60/` 或其他城市 cache) | 是（运行时必需） |
 
 ## 常见问题
 
@@ -114,3 +114,5 @@ export PROJ_DATA=$(python -c "import pyproj; print(pyproj.datadir.get_data_dir()
 ```
 
 **L3 tile cache 不存在**：需要先构建，参见 `data/l3_urban/README.md`。
+
+补充：`data/l3_urban/shanxisheng/陕西省/` 提供陕西省原始建筑 shapefile，可用于构建其他城市的 tile cache。

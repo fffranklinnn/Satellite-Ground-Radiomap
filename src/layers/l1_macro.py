@@ -46,7 +46,12 @@ from ..core.physics import (
     phased_array_peak_gain_db,
     phased_array_hpbw_deg,
     SPEED_OF_LIGHT,
+    atmospheric_loss,
+    atmospheric_loss_era5,
+    ionospheric_loss,
 )
+from ..utils.ionex_loader import IonexLoader
+from ..utils.era5_loader import load_era5
 
 
 # ── TLE helpers ───────────────────────────────────────────────────────────────
@@ -121,24 +126,45 @@ class L1MacroLayer(BaseLayer):
         """
         if isinstance(config, str):
             cfg_path = Path(config)
-            self.cfg = self._load_yaml(cfg_path)
-            origin_cfg = self.cfg.get("origin", {})
-            origin_lat = float(origin_cfg.get("lat", 34.3416))
-            origin_lon = float(origin_cfg.get("lon", 108.9398))
-            base_config = {"grid_size": 256, "coverage_km": 256.0, "resolution_m": 1000.0}
+            raw_cfg = self._load_yaml(cfg_path)
+            if isinstance(raw_cfg.get("layers"), dict) and isinstance(raw_cfg["layers"].get("l1_macro"), dict):
+                self.cfg = raw_cfg["layers"]["l1_macro"]
+                origin_cfg = raw_cfg.get("origin", {})
+            else:
+                self.cfg = raw_cfg
+                origin_cfg = self.cfg.get("origin", {})
+
+            if origin_lat is None:
+                origin_lat = float(origin_cfg.get("latitude", origin_cfg.get("lat", 34.3416)))
+            if origin_lon is None:
+                origin_lon = float(origin_cfg.get("longitude", origin_cfg.get("lon", 108.9398)))
+
+            base_config = {
+                "grid_size": int(self.cfg.get("grid_size", 256)),
+                "coverage_km": float(self.cfg.get("coverage_km", 256.0)),
+                "resolution_m": float(self.cfg.get("resolution_m", 1000.0)),
+            }
         else:
             self.cfg = config
-            base_config = config
+            base_config = {
+                "grid_size": int(self.cfg.get("grid_size", 256)),
+                "coverage_km": float(self.cfg.get("coverage_km", 256.0)),
+                "resolution_m": float(self.cfg.get("resolution_m", 1000.0)),
+            }
 
         super().__init__(base_config, origin_lat, origin_lon)
 
         # RF / antenna parameters
-        freq_cfg = self.cfg.get("frequency", {})
-        if isinstance(freq_cfg, dict):
-            self.freq_hz = float(freq_cfg.get("center_hz", self.FREQ_HZ_DEFAULT))
+        freq_cfg = self.cfg.get("frequency", None)
+        if isinstance(freq_cfg, dict) and freq_cfg.get("center_hz") is not None:
+            self.freq_hz = float(freq_cfg["center_hz"])
+        elif freq_cfg is not None and not isinstance(freq_cfg, dict):
+            # Allow scalar config["frequency"] in GHz for backward compatibility.
+            self.freq_hz = float(freq_cfg) * 1e9
         else:
             self.freq_hz = float(self.cfg.get("frequency_ghz", self.FREQ_HZ_DEFAULT / 1e9)) * 1e9
 
+        self.frequency_ghz = self.freq_hz / 1e9
         self.wavelength_m = SPEED_OF_LIGHT / self.freq_hz
         self.element_spacing_m = 0.5 * self.wavelength_m
 
@@ -153,9 +179,12 @@ class L1MacroLayer(BaseLayer):
         self.pol_mismatch_deg = float(pol_cfg.get("mismatch_angle_deg", 0.0))
         self.pol_loss_db = polarization_loss_db(self.pol_mismatch_deg)
 
-        self.target_norad_ids: List[str] = [
-            str(x) for x in self.cfg.get("target_norad_ids", [])
-        ]
+        target_ids = self.cfg.get("target_norad_ids", [])
+        if isinstance(target_ids, (str, int, float)):
+            target_ids = [target_ids]
+        self.target_norad_ids: List[str] = [str(x) for x in target_ids]
+        self.rain_rate_mm_h = float(self.cfg.get("rain_rate_mm_h", 0.0))
+        self.default_tec = float(self.cfg.get("tec", 10.0))
 
         # Resolve TLE file path
         tle_cfg = self.cfg.get("tle", {})
@@ -165,11 +194,32 @@ class L1MacroLayer(BaseLayer):
         if tle_file is None:
             raise ValueError("[L1] No TLE file specified (key: tle.file or tle_file).")
 
-        _root = Path(__file__).resolve().parents[2]
-        tle_path = (_root / tle_file) if not Path(tle_file).is_absolute() else Path(tle_file)
-        if not tle_path.exists():
-            tle_path = Path(tle_file)
+        tle_path = self._resolve_data_path(tle_file)
         self.satellites, self.tle_groups = _parse_tle_file(str(tle_path))
+
+        # Optional real-data sources (graceful fallback when missing/unreadable)
+        self.ionex = None
+        ionex_file = self.cfg.get("ionex_file")
+        if ionex_file:
+            ionex_path = self._resolve_data_path(ionex_file)
+            if ionex_path.exists():
+                try:
+                    self.ionex = IonexLoader(str(ionex_path))
+                    print(f"[L1] IONEX loaded: {ionex_path.name}")
+                except Exception as exc:
+                    print(f"[L1] IONEX unavailable ({exc}); using fallback TEC={self.default_tec:.1f}.")
+            else:
+                print(f"[L1] IONEX file not found: {ionex_path}; using fallback TEC={self.default_tec:.1f}.")
+
+        self.era5 = None
+        era5_file = self.cfg.get("era5_file")
+        if era5_file:
+            era5_path = self._resolve_data_path(era5_file)
+            self.era5 = load_era5(str(era5_path))
+            if self.era5 is not None:
+                print(f"[L1] ERA5 loaded: {era5_path.name}")
+            else:
+                print("[L1] ERA5 unavailable; using simplified atmospheric model.")
 
         self.ts = load.timescale()
         self._sim_time = None
@@ -183,6 +233,37 @@ class L1MacroLayer(BaseLayer):
             return {}
         with open(cfg_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
+
+    @staticmethod
+    def _resolve_data_path(path_value: Union[str, Path]) -> Path:
+        """Resolve a data path against project root when given a relative path."""
+        candidate = Path(path_value)
+        if candidate.is_absolute():
+            return candidate
+
+        root = Path(__file__).resolve().parents[2]
+        rooted = root / candidate
+        if rooted.exists():
+            return rooted
+        return candidate
+
+    def _resolve_sim_datetime(self, timestamp: Optional[datetime]) -> datetime:
+        """Resolve simulation datetime in UTC and sync Skyfield time state."""
+        if timestamp is not None:
+            dt_utc = timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=timezone.utc)
+            self._sim_time = self.ts.from_datetime(dt_utc)
+            return dt_utc
+
+        if self._sim_time is not None:
+            dt = self._sim_time.utc_datetime()
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+
+        dt_now = datetime.now(timezone.utc)
+        self._sim_time = self.ts.from_datetime(dt_now)
+        print("[L1] No simulation time set — using current UTC.")
+        return dt_now
 
     def _print_antenna_params(self):
         print(f"[L1] {self.ARRAY_ROWS}x{self.ARRAY_COLS} array | "
@@ -207,20 +288,48 @@ class L1MacroLayer(BaseLayer):
 
         Pixels with elevation < MIN_ELEVATION_DEG are set to NO_COVERAGE_LOSS_DB.
         """
+        components = self.compute_components(
+            origin_lat=origin_lat,
+            origin_lon=origin_lon,
+            timestamp=timestamp,
+            context=context,
+            **kwargs
+        )
+        return components["total"]
+
+    def compute_components(self,
+                           timestamp: Optional[datetime] = None,
+                           origin_lat: float = None,
+                           origin_lon: float = None,
+                           context: Optional[LayerContext] = None,
+                           **kwargs) -> Dict[str, Any]:
+        """
+        Compute L1 component maps (FSPL/ATM/IONO/GAIN/TOTAL).
+
+        Returns:
+            Dict with float32 component arrays and metadata.
+        """
         if origin_lat is None:
             origin_lat = self.origin_lat
         if origin_lon is None:
             origin_lon = self.origin_lon
 
-        if timestamp is not None:
-            self.set_time(timestamp)
-        if self._sim_time is None:
-            self._sim_time = self.ts.now()
-            print("[L1] No simulation time set — using current UTC.")
+        ctx = LayerContext.from_any(context).merged_with_kwargs(kwargs)
+        target_ids = ctx.extras.get("target_norad_ids", ctx.extras.get("norad_ids"))
+        if isinstance(target_ids, (str, int, float)):
+            target_ids = [str(target_ids)]
+        elif isinstance(target_ids, (list, tuple, set)):
+            target_ids = [str(x) for x in target_ids]
+        else:
+            target_ids = None
 
-        print(f"[L1] Computing @ ({origin_lat:.4f}N, {origin_lon:.4f}E)")
+        rain_rate_mm_h = float(ctx.extras.get("rain_rate_mm_h", self.rain_rate_mm_h))
 
-        sat, sat_info = self._select_best_satellite(origin_lat, origin_lon)
+        sim_dt = self._resolve_sim_datetime(timestamp)
+
+        print(f"[L1] Computing @ ({origin_lat:.4f}N, {origin_lon:.4f}E) | {sim_dt.isoformat()}")
+
+        _, sat_info = self._select_best_satellite(origin_lat, origin_lon, target_norad_ids=target_ids)
 
         lat_grid, lon_grid, x_m, y_m = get_grid_latlon(origin_lat, origin_lon)
 
@@ -245,7 +354,44 @@ class L1MacroLayer(BaseLayer):
         )
 
         fspl = fspl_db(slant_range_m, self.freq_hz)
-        net_loss_db = fspl + self.pol_loss_db - gain_db
+
+        epoch_sec = (
+            sim_dt.hour * 3600 +
+            sim_dt.minute * 60 +
+            sim_dt.second +
+            sim_dt.microsecond / 1e6
+        )
+        hour_utc = epoch_sec / 3600.0
+
+        if self.ionex is not None:
+            try:
+                tec_map = self.ionex.get_tec(epoch_sec, lat_grid, lon_grid)
+            except Exception as exc:
+                print(f"[L1] IONEX query failed ({exc}); fallback TEC={self.default_tec:.1f}.")
+                tec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
+        else:
+            tec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
+
+        iono_db = ionospheric_loss(self.frequency_ghz, tec_map)
+
+        if self.era5 is not None:
+            try:
+                iwv_map = self.era5.get_iwv(hour_utc, lat_grid, lon_grid)
+                atm_db = atmospheric_loss_era5(
+                    elevation_deg,
+                    self.frequency_ghz,
+                    iwv_map,
+                    rain_rate_mm_h=rain_rate_mm_h,
+                )
+            except Exception as exc:
+                print(f"[L1] ERA5 query failed ({exc}); fallback simplified atmospheric model.")
+                iwv_map = np.full_like(lat_grid, np.nan, dtype=np.float32)
+                atm_db = atmospheric_loss(elevation_deg, self.frequency_ghz, rain_rate_mm_h)
+        else:
+            iwv_map = np.full_like(lat_grid, np.nan, dtype=np.float32)
+            atm_db = atmospheric_loss(elevation_deg, self.frequency_ghz, rain_rate_mm_h)
+
+        net_loss_db = fspl + atm_db + iono_db + self.pol_loss_db - gain_db
 
         occlusion_mask = elevation_deg < self.MIN_ELEVATION_DEG
         net_loss_db[occlusion_mask] = self.NO_COVERAGE_LOSS_DB
@@ -255,20 +401,38 @@ class L1MacroLayer(BaseLayer):
             print(f"[L1] Done | visible {int(np.sum(~occlusion_mask))}/{GRID_SIZE**2} px | "
                   f"loss {net_loss_db[valid].min():.1f}~{net_loss_db[valid].max():.1f} dB")
 
-        return net_loss_db.astype(np.float32)
+        return {
+            "total": net_loss_db.astype(np.float32),
+            "fspl": fspl.astype(np.float32),
+            "atm": atm_db.astype(np.float32),
+            "iono": iono_db.astype(np.float32),
+            "gain": gain_db.astype(np.float32),
+            "pol": np.full_like(net_loss_db, self.pol_loss_db, dtype=np.float32),
+            "elevation": elevation_deg.astype(np.float32),
+            "azimuth": azimuth_deg.astype(np.float32),
+            "slant_range_m": slant_range_m.astype(np.float32),
+            "tec": tec_map.astype(np.float32),
+            "iwv": iwv_map.astype(np.float32),
+            "occlusion_mask": occlusion_mask,
+            "satellite": sat_info,
+            "timestamp": sim_dt,
+        }
 
-    def _select_best_satellite(self, origin_lat: float,
-                               origin_lon: float) -> Tuple[EarthSatellite, Dict]:
+    def _select_best_satellite(self,
+                               origin_lat: float,
+                               origin_lon: float,
+                               target_norad_ids: Optional[List[str]] = None) -> Tuple[EarthSatellite, Dict]:
         """Select satellite with highest elevation angle over origin."""
         observer = wgs84.latlon(origin_lat, origin_lon)
         best_sat  = None
         best_info: Dict = {}
         best_el   = -999.0
         skipped   = 0
+        filter_ids = target_norad_ids if target_norad_ids is not None else self.target_norad_ids
 
         for sat, tg in zip(self.satellites, self.tle_groups):
             norad_id = _get_norad_id(tg)
-            if self.target_norad_ids and norad_id not in self.target_norad_ids:
+            if filter_ids and norad_id not in filter_ids:
                 continue
             try:
                 diff = sat - observer
@@ -313,6 +477,70 @@ class L1MacroLayer(BaseLayer):
               f"alt={best_info['alt_m']/1e3:.1f} km")
         return best_sat, best_info
 
+    def get_visible_satellites(self,
+                               origin_lat: float,
+                               origin_lon: float,
+                               timestamp: Optional[datetime] = None,
+                               min_elevation_deg: Optional[float] = None,
+                               target_norad_ids: Optional[List[str]] = None,
+                               max_count: Optional[int] = None) -> List[Dict[str, float]]:
+        """
+        Enumerate visible satellites over an observer location.
+
+        Returns satellites sorted by elevation (descending).
+        """
+        self._resolve_sim_datetime(timestamp)
+        observer = wgs84.latlon(origin_lat, origin_lon)
+
+        min_el = self.MIN_ELEVATION_DEG if min_elevation_deg is None else float(min_elevation_deg)
+        filter_ids = target_norad_ids if target_norad_ids is not None else self.target_norad_ids
+        if isinstance(filter_ids, (str, int, float)):
+            filter_ids = [str(filter_ids)]
+        elif isinstance(filter_ids, (list, tuple, set)):
+            filter_ids = [str(x) for x in filter_ids]
+        else:
+            filter_ids = []
+
+        best_per_norad: Dict[str, Dict[str, float]] = {}
+        for sat, tg in zip(self.satellites, self.tle_groups):
+            norad_id = _get_norad_id(tg)
+            if filter_ids and norad_id not in filter_ids:
+                continue
+            try:
+                diff = sat - observer
+                topocentric = diff.at(self._sim_time)
+                alt, az, dist = topocentric.altaz()
+                el_deg = float(alt.degrees)
+                if el_deg < min_el:
+                    continue
+
+                alt_km = _get_sat_altitude_km(sat, self._sim_time)
+                if alt_km < self.MIN_ORBIT_ALT_KM or alt_km > self.MAX_ORBIT_ALT_KM:
+                    continue
+
+                geocentric = sat.at(self._sim_time)
+                subpoint = wgs84.subpoint_of(geocentric)
+                info = {
+                    "norad_id": norad_id,
+                    "elevation_deg": el_deg,
+                    "azimuth_deg": float(az.degrees),
+                    "slant_range_km": float(dist.km),
+                    "lat_deg": float(subpoint.latitude.degrees),
+                    "lon_deg": float(subpoint.longitude.degrees),
+                    "alt_m": alt_km * 1000.0,
+                }
+                prev = best_per_norad.get(norad_id)
+                if prev is None or info["elevation_deg"] > prev["elevation_deg"]:
+                    best_per_norad[norad_id] = info
+            except Exception:
+                continue
+
+        visible = list(best_per_norad.values())
+        visible.sort(key=lambda x: x["elevation_deg"], reverse=True)
+        if max_count is not None and max_count > 0:
+            visible = visible[:int(max_count)]
+        return visible
+
     # V2.0 stubs
     def _compute_ionospheric_scintillation_db(self, *_) -> np.ndarray:
         return np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
@@ -322,4 +550,3 @@ class L1MacroLayer(BaseLayer):
 
     def _load_antenna_pattern_csv(self, pattern_file: str):
         return None
-

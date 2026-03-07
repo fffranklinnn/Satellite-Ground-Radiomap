@@ -1,39 +1,47 @@
-# L2 Terrain Layer Data
+# data/l2_topo 说明
 
-L2 地形层数据目录，存放 DEM（数字高程模型）文件用于地形遮挡计算。
+L2 地形层的数据目录，当前主要使用全国 DEM GeoTIFF。
 
-## 当前数据
+## 1. 当前数据
 
-### `全国DEM数据.tif` — 全国数字高程模型
+- 文件：`全国DEM数据.tif`
+- 格式：GeoTIFF
+- 覆盖：约 15°~57°N, 73°~139°E
+- 分辨率：约 30 m（原始）
 
-- **格式**: GeoTIFF
-- **覆盖范围**: 15°~57°N, 73°~139°E（全国）
-- **分辨率**: ~0.000278°（约 30 m）
-- **像素尺寸**: 237600 × 151200
-- **坐标系**: WGS84
+## 2. 在 L2 中的使用方式
 
-## L2 层处理流程
+L2 不会整图加载，而是按每个 tile 的地理窗口读取：
 
-1. 根据 origin 坐标计算 25.6 km × 25.6 km 窗口范围
-2. 通过 rasterio 窗口读取，双线性重采样到 256×256（100 m/px）
-3. 向量化累积最大值 LOS 遮挡分析
-4. 遮挡像素施加 20 dB 衍射损耗
+1. 根据 tile 原点计算 25.6 km x 25.6 km 范围
+2. 窗口读取 DEM
+3. 重采样到 256x256（100 m/px）
+4. 进行遮挡扫描并估计衍射损耗
 
-## 配置
+这使得省域拼接任务仍可在可控内存下运行。
+
+## 3. 配置示例
 
 ```yaml
 layers:
   l2_topo:
     enabled: true
     dem_file: "data/l2_topo/全国DEM数据.tif"
+    frequency_ghz: 14.5
     satellite_elevation_deg: 45.0
     satellite_azimuth_deg: 180.0
 ```
 
-## 其他 DEM 数据源
+## 4. 常见问题
 
-如需替换或补充 DEM 数据：
+- 文件不存在：L2 会返回零损耗并给出日志警告。
+- 区域越界：L2 会抛出边界错误（请求区域超出 DEM 覆盖）。
+- 仰角过高：遮挡效应不明显，可用低仰角（如 10°~20°）做地形对比展示。
 
-- [SRTM](https://www2.jpl.nasa.gov/srtm/)：30 m / 90 m，`.hgt` 格式
-- [Copernicus DEM](https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model)：30 m GeoTIFF
-- [ASTER GDEM](https://asterweb.jpl.nasa.gov/gdem.asp)：30 m GeoTIFF
+## 5. 可替换数据源
+
+- SRTM
+- Copernicus DEM
+- ASTER GDEM
+
+替换时需保证坐标系和地理覆盖可被当前配置区域访问。

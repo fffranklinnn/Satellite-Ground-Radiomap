@@ -5,177 +5,150 @@
 
 [English README](README.md)
 
-星地多尺度电磁损耗地图仿真系统，用于卫星到地面的无线电传播分析。
+SG-MRM 是一个用于星地链路传播损耗建模的多尺度仿真框架，输出可用于 radiomap 生成、对比分析和批量实验。
 
-## 概述
+## 1. 计算目标
 
-SG-MRM 通过三层物理模型生成高分辨率电磁损耗图：
+对每个时间点和区域中心，系统输出各层 256x256 损耗图（dB）与复合图：
 
-- **L1 宏观层** (256 km, 1000 m/px)：TLE 轨道传播选星、自由空间路径损耗、31×31 相控阵天线增益、大气衰减（ERA5 IWV）、电离层效应（IONEX TEC）
-- **L2 地形层** (25.6 km, 100 m/px)：GeoTIFF DEM 加载与重采样、向量化累积最大值 LOS 遮挡分析、衍射损耗
-- **L3 城市层** (256 m, 1 m/px)：建筑高度栅格 tile cache、方向性 NLoS 扫描、遮挡/占用损耗
-
-各层输出 256×256 float32 dB 损耗矩阵，通过 dB 域叠加合成：
-
-```
-复合损耗 (dB) = Interp(L1) + Interp(L2) + L3
+```text
+L_total(dB) = Interp(L1 -> L3覆盖) + Interp(L2 -> L3覆盖) + L3
 ```
 
-## 安装
+### 三层建模范围
+
+| 层 | 空间尺度 | 分辨率 | 核心效应 |
+|---|---:|---:|---|
+| L1 宏观层 | 256 km x 256 km | 1000 m/px | TLE 选星、FSPL、相控阵增益、大气损耗、电离层 TEC 损耗 |
+| L2 地形层 | 25.6 km x 25.6 km | 100 m/px | DEM 加载、LOS 遮挡、衍射损耗 |
+| L3 城市层 | 256 m x 256 m | 1 m/px | 建筑 NLoS 阴影、占用损耗 |
+
+## 2. 当前实现能力（按代码现状）
+
+### 已实现
+
+- L1：
+  - 基于 TLE 的可见卫星枚举与最高仰角选星（`Skyfield`）
+  - FSPL + 高斯波束近似相控阵增益 + 极化失配
+  - IONEX TEC 读取；支持 IPP 穿刺点和 VTEC->STEC 映射
+  - 可选 Faraday 旋转附加失配（需可选地磁后端）
+  - ERA5 pressure-level (`q`) 积分得到 IWV，并用于改进大气损耗
+- L2：
+  - DEM 窗口读取与重采样
+  - 向量化方向性遮挡扫描
+  - 基于遮挡剖面的衍射损耗估计（带上限）
+- L3：
+  - tile cache (`H.npy`/`Occ.npy`) 加载
+  - 方向性 NLoS 扫描
+  - NLoS / 占用像素损耗映射
+- 引擎与脚本：
+  - 多层插值聚合
+  - 城市/省域拼接、批量实验、可见星统计、功能展示图生成
+
+### 尚未完全 ITU 严格化
+
+- 尚未完成 P.618 可用度统计链路（如 `R0.01` 统计映射）
+- 尚未做 P.676 全频谱逐层积分气体吸收
+- 主流程未集成闪烁（`S4`）模型
+- L3 尚未引入完整多径光线追踪核心
+
+## 3. 安装
 
 ```bash
 pip install -r requirements.txt
 ```
 
-主要依赖：numpy, scipy, matplotlib, pyyaml, skyfield, rasterio, geopandas, shapely, pyproj, pyarrow, pandas
+可选数据与依赖见 [data/README.md](data/README.md)。
 
-### 可选：PyTorch（GPU 加速）
-
-SG-MRM 当前主体仍是 `numpy/scipy`（CPU 计算）。从工程收益看，建议先做 **局部热点迁移**（优先 L2/L3），不建议一开始整体重写为 PyTorch。
-
-针对 `sgmrm_test`（Python 3.10）和 NVIDIA GPU，可按以下方式安装：
+### 可选：在 `sgmrm_test` 安装 PyTorch（用于后续热点迁移）
 
 ```bash
 conda activate sgmrm_test
 python -m pip install --upgrade pip
-# 对于本项目当前机器环境（Driver 535 / CUDA 12.2），建议使用固定兼容版本：
 python -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 ```
 
-安装后验证：
+验证：
 
 ```bash
 python - << 'PY'
 import torch
-print("torch:", torch.__version__)
-print("cuda available:", torch.cuda.is_available())
-print("gpu count:", torch.cuda.device_count())
+print(torch.__version__)
+print(torch.cuda.is_available(), torch.cuda.device_count())
 if torch.cuda.is_available():
-    print("gpu0:", torch.cuda.get_device_name(0))
+    print(torch.cuda.get_device_name(0))
 PY
 ```
 
-若你已经升级到支持更新 CUDA 轮子的 NVIDIA 驱动，请按 PyTorch 官方选择器给出的最新命令安装（常见为 cu126/cu128/cu130），例如：
+## 4. 快速开始
 
-```bash
-python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-```
-
-## 快速开始
-
-### 运行完整仿真
+### 主程序
 
 ```bash
 python main.py --config configs/mission_config.yaml --output output/
 ```
 
-### 编程接口
-
-```python
-from datetime import datetime
-from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
-from src.engine import RadioMapAggregator
-from src.layers.base import LayerContext
-import yaml
-
-config = yaml.safe_load(open('configs/mission_config.yaml'))
-lat, lon = config['origin']['latitude'], config['origin']['longitude']
-
-l1 = L1MacroLayer(config['layers']['l1_macro'], lat, lon)
-l2 = L2TopoLayer(config['layers']['l2_topo'], lat, lon)
-l3 = L3UrbanLayer(config['layers']['l3_urban'], lat, lon)
-
-agg = RadioMapAggregator(l1, l2, l3)
-ctx = LayerContext.from_any({'incident_dir': config['layers']['l3_urban']['incident_dir']})
-composite = agg.aggregate(lat, lon, timestamp=datetime(2025, 1, 1, 6, 0, 0), context=ctx)
-# composite: (256, 256) float32, dB
-```
-
-### 可视化脚本
+### 常用脚本
 
 ```bash
-python scripts/generate_l1_map.py              # L1 全天时序 + 参数扫描
-python scripts/generate_global_comparison.py    # 全球六城市对比
-python scripts/generate_global_map.py           # 全球损耗图 (720×360)
+python scripts/generate_full_radiomap.py --timestamp 2025-01-01T06:00:00
+python scripts/report_satellite_visibility.py --start 2025-01-01T00:00:00 --end 2025-01-01T23:00:00 --step-hours 1
+python scripts/generate_feature_showcase.py --output-root output/feature_showcase_demo
+python scripts/check_data_integrity.py --config configs/mission_config.yaml --strict
 ```
 
-## 项目结构
+更多脚本说明见 [scripts/README.md](scripts/README.md)。
 
-```
+## 5. 仓库内数据快照
+
+| 类型 | 路径 | 当前用途 |
+|---|---|---|
+| TLE | `data/2025_0101.tle` | 2025-01-01 主仿真轨道数据 |
+| IONEX | `data/l1_space/data/*.INX.gz` | 电离层 TEC |
+| ERA5 pressure-level | `data/l1_space/data/*.nc` | IWV 提取（`q` 积分） |
+| DEM | `data/l2_topo/全国DEM数据.tif` | L2 地形遮挡 |
+| L3 原始数据 | `data/l3_urban/shanxisheng/陕西省/*.shp` | 陕西省建筑矢量源 |
+| L3 可运行缓存 | `data/l3_urban/xian/tiles_60/` | 西安现成 cache |
+
+## 6. 项目结构与可优化点
+
+```text
 Satellite-Ground-Radiomap/
-├── configs/              # 仿真配置文件 (YAML)
-├── data/
-│   ├── 2025_0101.tle     # Starlink TLE 轨道数据
-│   ├── l1_space/data/    # IONEX 电离层 + ERA5 气象数据
-│   ├── l2_topo/          # 全国 DEM GeoTIFF
-│   └── l3_urban/         # 原始建筑矢量 + 建筑 tile cache (H.npy/Occ.npy)
-├── src/
-│   ├── core/             # 网格坐标系统 + RF 物理公式
-│   ├── layers/           # L1/L2/L3 层实现
-│   ├── engine/           # 多层聚合引擎
-│   └── utils/            # 数据加载器、可视化、性能分析
-├── tools/                # L3 tile cache 构建工具
-├── scripts/              # 可视化与批量生成脚本
-├── tests/                # 单元测试
-├── examples/             # 使用示例
-├── docs/                 # 架构文档
-└── main.py               # 主入口
+├── src/             # 运行时核心代码（core/layers/engine/utils）
+├── scripts/         # 批处理与出图入口
+├── configs/         # YAML 配置
+├── data/            # 数据目录（含重数据入口）
+├── docs/            # 文档
+├── tests/           # 单元测试
+├── examples/        # 旧示例
+├── output/          # 生成结果（已 gitignore）
+└── branch_L1/L2/L3/ # 本地历史分支快照（已 gitignore）
 ```
 
-## 当前数据配置（西安 · 陕西省）
+建议：
 
-| 数据 | 文件 | 说明 |
-|------|------|------|
-| TLE | `data/2025_0101.tle` | Starlink 星座 14918 颗卫星 (2025-01-01) |
-| IONEX | `data/l1_space/data/*.INX.gz` | UPC GIM 全球 TEC (15 分钟间隔) |
-| ERA5 | `data/l1_space/data/*.nc` | ECMWF 气压层数据 (z/r/q/t) |
-| DEM | `data/l2_topo/全国DEM数据.tif` | 全国 DEM (~30 m 分辨率) |
-| 建筑（原始） | `data/l3_urban/shanxisheng/陕西省/*.shp` | 陕西省多城市原始建筑矢量 |
-| 建筑（缓存） | `data/l3_urban/xian/tiles_60/` | 西安市区核心区 1320 tiles (256 m, 1 m/px) |
+1. `src/` 作为唯一运行时真源，`branch_*` 仅做历史参考。
+2. 大体量结果统一放 `output/`，原始下载放 `data/` 或 `cddis_data_2025/`。
+3. 长期维护时可把 `branch_*` 归档或移出主目录，减少结构噪声。
+4. 优先通过 `scripts/` 复现实验，避免不可追踪的临时流程。
 
-## 性能基准（西安，4 帧全天仿真）
+## 7. 文档索引
 
-| 阶段 | 耗时 | 峰值内存 |
-|------|------|---------|
-| L1 初始化（解析 14918 TLE） | 0.46 s | 31.0 MB |
-| L1 compute（选星 + FSPL + 增益） | ~4.6 s | 6.7 MB |
-| L2 compute（DEM 读取 + LOS） | ~0.003 s | 1.8 MB |
-| L3 compute（tile 加载 + NLoS） | ~0.14 s | 2.1 MB |
-| 单帧总计 | ~9.5 s | — |
+- 文档入口：[docs/README.md](docs/README.md)
+- 快速上手：[docs/QUICKSTART.md](docs/QUICKSTART.md)
+- 配置说明：[configs/README.md](configs/README.md)
+- 数据说明：[data/README.md](data/README.md)
+- 三层实现：[src/layers/README.md](src/layers/README.md)
+- 工具模块：[src/utils/README.md](src/utils/README.md)
+- 测试说明：[tests/README.md](tests/README.md)
 
-## 开发路线
-
-### V1.0（当前）✓
-
-- [x] L1：TLE 选星 + FSPL + 相控阵增益 + 大气/电离层损耗
-- [x] L2：GeoTIFF DEM 加载 + 向量化 LOS 遮挡 + 衍射损耗
-- [x] L3：Tile cache 建筑栅格 + 方向性 NLoS 扫描 + 遮挡/占用损耗
-- [x] 多层聚合引擎（dB 域叠加 + 双线性插值）
-- [x] 数据加载器：IONEX、ERA5、TLE
-- [x] 可视化工具 + 单元测试
-
-### V2.0（规划）
-
-- [ ] ITU-R P.526 Fresnel-Kirchhoff 刃形衍射模型 (L2)
-- [ ] GPU 光线追踪多径效应 (L3)
-- [ ] 完整 ITU-R P.618 雨衰模型
-- [ ] 多日仿真：按日期自动切换 TLE/IONEX/ERA5 数据源
-- [ ] 时序动画生成
-- [ ] 并行计算支持
-
-## 测试
+## 8. 测试
 
 ```bash
 pytest tests/
 pytest --cov=src tests/
 ```
 
-## 文档
-
-- [架构设计](docs/architecture.md)
-- [快速入门](docs/QUICKSTART.md)
-- [English README](README.md)
-
 ## 许可证
 
-MIT License - 详见 [LICENSE](LICENSE)
+MIT License，见 [LICENSE](LICENSE)。

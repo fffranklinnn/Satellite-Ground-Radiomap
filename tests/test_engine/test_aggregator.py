@@ -56,3 +56,29 @@ def test_aggregator_layer_contributions():
     assert "l1" in contributions
     assert "composite" in contributions
     assert contributions["l1"].shape == (256, 256)
+
+
+class _DummyLayer:
+    def __init__(self, value: float, coverage_km: float = 0.256):
+        self.value = float(value)
+        self.coverage_km = float(coverage_km)
+        self.calls = 0
+
+    def compute(self, origin_lat, origin_lon, timestamp=None, context=None):
+        self.calls += 1
+        return np.full((256, 256), self.value, dtype=np.float32)
+
+
+def test_get_layer_contributions_calls_each_layer_once():
+    l1 = _DummyLayer(1.0, coverage_km=0.256)
+    l2 = _DummyLayer(2.0, coverage_km=0.256)
+    l3 = _DummyLayer(3.0, coverage_km=0.256)
+    agg = RadioMapAggregator(l1_layer=l1, l2_layer=l2, l3_layer=l3)
+
+    out = agg.get_layer_contributions(0.0, 0.0, timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    assert l1.calls == 1
+    assert l2.calls == 1
+    assert l3.calls == 1
+    assert out["composite"].shape == (256, 256)
+    assert np.allclose(out["composite"], 6.0, atol=1e-6)

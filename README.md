@@ -5,167 +5,150 @@
 
 [中文版 README](README_CN.md)
 
-A multi-scale electromagnetic loss mapping system for satellite-to-ground radio propagation analysis.
+SG-MRM is a multi-scale radio propagation mapping framework for satellite-to-ground links.
 
-## Overview
+## 1. What It Computes
 
-SG-MRM generates high-resolution electromagnetic loss maps by combining three physical layers:
+For each timestamp and region center, SG-MRM outputs a 256x256 loss map (dB) per layer and an aggregated map:
 
-- **L1 Macro Layer** (256 km, 1000 m/px): TLE orbit propagation, FSPL, 31×31 phased-array antenna gain, atmospheric attenuation (ERA5 IWV), ionospheric effects (IONEX TEC)
-- **L2 Terrain Layer** (25.6 km, 100 m/px): GeoTIFF DEM loading & resampling, vectorized cumulative-max LOS occlusion, diffraction loss
-- **L3 Urban Layer** (256 m, 1 m/px): Building height raster tile cache, directional NLoS scan, occlusion/occupancy loss
-
-Each layer outputs a 256×256 float32 loss matrix in dB, combined via dB-domain summation:
-
-```
-Composite Loss (dB) = Interp(L1) + Interp(L2) + L3
+```text
+L_total(dB) = Interp(L1 -> L3 footprint) + Interp(L2 -> L3 footprint) + L3
 ```
 
-## Installation
+### Layer scope
+
+| Layer | Spatial scale | Resolution | Main effects |
+|---|---:|---:|---|
+| L1 Macro | 256 km x 256 km | 1000 m/px | TLE-based satellite selection, FSPL, phased-array gain, atmospheric loss, ionospheric TEC loss |
+| L2 Terrain | 25.6 km x 25.6 km | 100 m/px | DEM loading, LOS blockage, knife-edge-style diffraction loss |
+| L3 Urban | 256 m x 256 m | 1 m/px | Building NLoS mask, occupancy-based loss |
+
+## 2. Current Capability Status (Code Reality)
+
+### Implemented
+
+- L1:
+  - Visible-satellite enumeration and best-satellite selection from TLE (`Skyfield`)
+  - FSPL + phased-array Gaussian beam + polarization mismatch
+  - IONEX TEC ingestion with optional IPP projection and VTEC->STEC mapping
+  - Optional Faraday-rotation-induced extra polarization loss (requires optional geomagnetic backend)
+  - ERA5 pressure-level loading (`q` integration -> IWV) and IWV-based atmospheric attenuation
+- L2:
+  - Window-based DEM read + bilinear resampling
+  - Vectorized directional occlusion scan
+  - Diffraction loss derived from occlusion profile (capped)
+- L3:
+  - Tile-cache loading (`H.npy` / `Occ.npy`)
+  - Directional NLoS scan
+  - NLoS / occupancy loss mapping
+- Engine and tooling:
+  - Multi-layer aggregation with interpolation
+  - Batch scripts, province/city stitching scripts, satellite-visibility reporting
+
+### Not fully ITU-complete yet
+
+- No full ITU-R P.618 statistical availability chain (`R0.01`, long-term exceedance conversion)
+- No pressure-level line-by-line gaseous attenuation integration (P.676 full form)
+- No scintillation (`S4`) model in main pipeline
+- No full multipath/ray-tracing kernel for L3
+
+## 3. Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Key dependencies: numpy, scipy, matplotlib, pyyaml, skyfield, rasterio, geopandas, shapely, pyproj, pyarrow, pandas
+Optional datasets and backends are documented in [data/README.md](data/README.md).
 
-### Optional: PyTorch (GPU Acceleration)
-
-SG-MRM currently runs mainly on `numpy/scipy` (CPU). For practical speedup, a **targeted** migration is recommended first (L2/L3 hotspots), not a full rewrite.
-
-For `sgmrm_test` (Python 3.10) with NVIDIA GPUs:
+### Optional: PyTorch in `sgmrm_test` (for future hotspot migration)
 
 ```bash
 conda activate sgmrm_test
 python -m pip install --upgrade pip
-# For driver/CUDA environments similar to this project setup (Driver 535 / CUDA 12.2),
-# use a pinned compatible wheel:
 python -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 ```
 
-Verify installation:
+Validate:
 
 ```bash
 python - << 'PY'
 import torch
-print("torch:", torch.__version__)
-print("cuda available:", torch.cuda.is_available())
-print("gpu count:", torch.cuda.device_count())
+print(torch.__version__)
+print(torch.cuda.is_available(), torch.cuda.device_count())
 if torch.cuda.is_available():
-    print("gpu0:", torch.cuda.get_device_name(0))
+    print(torch.cuda.get_device_name(0))
 PY
 ```
 
-If you have upgraded to a newer NVIDIA driver that supports newer CUDA wheels, install the latest command from the official selector (often cu126/cu128/cu130):
+## 4. Quick Start
 
-```bash
-python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-```
-
-## Quick Start
-
-### Run full simulation
+### Main simulation
 
 ```bash
 python main.py --config configs/mission_config.yaml --output output/
 ```
 
-### Programmatic API
-
-```python
-from datetime import datetime
-from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
-from src.engine import RadioMapAggregator
-from src.layers.base import LayerContext
-import yaml
-
-config = yaml.safe_load(open('configs/mission_config.yaml'))
-lat, lon = config['origin']['latitude'], config['origin']['longitude']
-
-l1 = L1MacroLayer(config['layers']['l1_macro'], lat, lon)
-l2 = L2TopoLayer(config['layers']['l2_topo'], lat, lon)
-l3 = L3UrbanLayer(config['layers']['l3_urban'], lat, lon)
-
-agg = RadioMapAggregator(l1, l2, l3)
-ctx = LayerContext.from_any({'incident_dir': config['layers']['l3_urban']['incident_dir']})
-composite = agg.aggregate(lat, lon, timestamp=datetime(2025, 1, 1, 6, 0, 0), context=ctx)
-# composite: (256, 256) float32, dB
-```
-
-### Visualization scripts
+### Common script entry points
 
 ```bash
-python scripts/generate_l1_map.py              # L1 hourly + parameter sweeps
-python scripts/generate_global_comparison.py    # 6-city global comparison
-python scripts/generate_global_map.py           # Global loss map (720×360)
+python scripts/generate_full_radiomap.py --timestamp 2025-01-01T06:00:00
+python scripts/report_satellite_visibility.py --start 2025-01-01T00:00:00 --end 2025-01-01T23:00:00 --step-hours 1
+python scripts/generate_feature_showcase.py --output-root output/feature_showcase_demo
+python scripts/check_data_integrity.py --config configs/mission_config.yaml --strict
 ```
 
-## Project Structure
+More script details: [scripts/README.md](scripts/README.md)
 
-```
+## 5. Data Snapshot in This Repository
+
+| Type | Path | Current role |
+|---|---|---|
+| TLE | `data/2025_0101.tle` | Main satellite ephemeris source for Jan 1, 2025 runs |
+| IONEX | `data/l1_space/data/*.INX.gz` | TEC maps for ionosphere |
+| ERA5 pressure-level | `data/l1_space/data/*.nc` | IWV extraction (`q` integration) |
+| DEM | `data/l2_topo/全国DEM数据.tif` | L2 terrain blockage |
+| L3 raw source | `data/l3_urban/shanxisheng/陕西省/*.shp` | Province-wide raw building vector source |
+| L3 runnable cache | `data/l3_urban/xian/tiles_60/` | Ready-to-run Xi'an building cache |
+
+## 6. Repository Structure and Optimization Notes
+
+```text
 Satellite-Ground-Radiomap/
-├── configs/              # Simulation config (YAML)
-├── data/
-│   ├── 2025_0101.tle     # Starlink TLE orbit data
-│   ├── l1_space/data/    # IONEX TEC + ERA5 atmospheric data
-│   ├── l2_topo/          # National DEM GeoTIFF
-│   └── l3_urban/         # Raw building shapefiles + tile cache (H.npy/Occ.npy)
-├── src/
-│   ├── core/             # Grid coordinate system + RF physics
-│   ├── layers/           # L1/L2/L3 layer implementations
-│   ├── engine/           # Multi-layer aggregation engine
-│   └── utils/            # Data loaders, plotting, profiling
-├── tools/                # L3 tile cache build tools
-├── scripts/              # Visualization & batch generation
-├── tests/                # Unit tests
-├── examples/             # Usage examples
-├── docs/                 # Architecture docs
-└── main.py               # Entry point
+├── src/             # Runtime code (core/layers/engine/utils)
+├── scripts/         # Batch and figure-generation entry points
+├── configs/         # YAML configs
+├── data/            # Data stubs + local heavy data roots
+├── docs/            # Guides and summaries
+├── tests/           # Unit tests
+├── examples/        # Legacy demos
+├── output/          # Generated artifacts (gitignored)
+└── branch_L1/L2/L3/ # Local historical branch snapshots (gitignored)
 ```
 
-## Current Data (Xi'an, Shaanxi)
+Practical optimization recommendations:
 
-| Data | File | Description |
-|------|------|-------------|
-| TLE | `data/2025_0101.tle` | Starlink constellation, 14918 sats (2025-01-01) |
-| IONEX | `data/l1_space/data/*.INX.gz` | UPC GIM global TEC (15 min interval) |
-| ERA5 | `data/l1_space/data/*.nc` | ECMWF pressure-level data (z/r/q/t) |
-| DEM | `data/l2_topo/全国DEM数据.tif` | National DEM (~30 m resolution) |
-| Buildings (raw) | `data/l3_urban/shanxisheng/陕西省/*.shp` | Shaanxi-wide source shapefiles (multi-city coverage) |
-| Buildings (cache) | `data/l3_urban/xian/tiles_60/` | Xi'an urban core cache, 1320 tiles (256 m, 1 m/px) |
+1. Keep `src/` as the single runtime source of truth; avoid editing `branch_*` trees.
+2. Keep all heavy artifacts under `output/` and data downloads under `data/` or `cddis_data_2025/` (already gitignored).
+3. For long-term cleanliness, archive or remove local `branch_*` snapshots once no longer needed.
+4. Prefer script-based reproducibility (`scripts/`) over ad-hoc notebook outputs.
 
-## Roadmap
+## 7. Documentation Map
 
-### V1.0 (Current) ✓
+- Project docs index: [docs/README.md](docs/README.md)
+- Quick start: [docs/QUICKSTART.md](docs/QUICKSTART.md)
+- Config schema: [configs/README.md](configs/README.md)
+- Data and acquisition: [data/README.md](data/README.md)
+- Layer implementation notes: [src/layers/README.md](src/layers/README.md)
+- Utility modules: [src/utils/README.md](src/utils/README.md)
+- Tests: [tests/README.md](tests/README.md)
 
-- [x] L1: TLE satellite selection + FSPL + phased-array gain + atmospheric/ionospheric loss
-- [x] L2: GeoTIFF DEM loading + vectorized LOS occlusion + diffraction loss
-- [x] L3: Tile cache building raster + directional NLoS scan + occlusion/occupancy loss
-- [x] Multi-layer aggregation engine (dB-domain summation + bilinear interpolation)
-- [x] Data loaders: IONEX, ERA5, TLE
-- [x] Visualization tools + unit tests
-
-### V2.0 (Planned)
-
-- [ ] ITU-R P.526 Fresnel-Kirchhoff knife-edge diffraction (L2)
-- [ ] GPU ray tracing for multipath (L3)
-- [ ] Full ITU-R P.618 rain attenuation model
-- [ ] Time-series animation generation
-- [ ] Parallel computation support
-
-## Testing
+## 8. Testing
 
 ```bash
 pytest tests/
 pytest --cov=src tests/
 ```
 
-## Documentation
-
-- [Architecture Guide](docs/architecture.md)
-- [Quick Start](docs/QUICKSTART.md)
-- [中文版 README](README_CN.md)
-
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+MIT License, see [LICENSE](LICENSE).

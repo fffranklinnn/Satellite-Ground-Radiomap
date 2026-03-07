@@ -1,158 +1,113 @@
-# Data Directory
+# data 目录说明
 
-This directory contains raw data sources for the SG-MRM simulation system.
+本目录管理 SG-MRM 的原始数据、示例数据与下载脚本入口。
 
-## Directory Structure
+## 1. 目录结构
 
-```
+```text
 data/
-├── l1_space/     # L1 Macro Layer data
-├── l2_topo/      # L2 Terrain Layer data
-└── l3_urban/     # L3 Urban Layer data
+├── 2025_0101.tle
+├── l1_space/
+│   └── data/
+├── l2_topo/
+└── l3_urban/
 ```
 
-## Data Sources by Layer
+## 2. 按层的数据依赖
 
-### L1 Space Data (`l1_space/`)
+### L1（星地宏观层）
 
-Data for satellite positioning and atmospheric effects:
+必需：
 
-- **TLE Files** (.txt): Two-Line Element sets for satellite orbit propagation
-  - Format: Standard TLE format
-  - Source: [CelesTrak](https://celestrak.com/), [Space-Track](https://www.space-track.org/)
-  - Example: `satellite.tle`
+- `data/2025_0101.tle`（或你自己的 TLE）
 
-- **Antenna Patterns** (.csv, .mat): Satellite antenna gain patterns
-  - Format: Elevation/Azimuth vs Gain (dBi)
-  - Example: `antenna_pattern.csv`
+可选增强：
 
-- **Weather Data** (.nc, .grib): Atmospheric parameters
-  - Format: NetCDF or GRIB
-  - Parameters: Temperature, pressure, humidity, rain rate
-  - Source: [ECMWF](https://www.ecmwf.int/), [NOAA](https://www.noaa.gov/)
+- IONEX：`data/l1_space/data/*.INX.gz`
+- ERA5 pressure-level：`data/l1_space/data/*.nc`
+- ERA5 single-level（雨衰/云雾扩展准备）：同目录下载结果
 
-Current repository includes practical download scripts:
-- `data/l1_space/data/cds.py` (ERA5 pressure-level via CDS API)
-- `data/l1_space/data/NASAcddis.py` (IONEX daily batch download)
+当前仓库内下载脚本：
 
-### L2 Topography Data (`l2_topo/`)
+- `data/l1_space/data/NASAcddis.py`：IONEX 批量下载
+- `data/l1_space/data/cds.py`：ERA5 pressure-level 下载请求
+- `data/l1_space/data/cds_pressure_batch.py`：ERA5 pressure-level 批量下载（按月/按日）
+- `data/l1_space/data/cds_single_level.py`：ERA5 single-level 下载请求
 
-Digital Elevation Model (DEM) data:
+### L2（地形层）
 
-- **DEM Files** (.tif, .hgt): Terrain elevation data
-  - Format: GeoTIFF or SRTM HGT
-  - Resolution: 30m, 90m, or higher
-  - Source: [SRTM](https://www2.jpl.nasa.gov/srtm/), [ASTER GDEM](https://asterweb.jpl.nasa.gov/gdem.asp)
-  - Example: `N39E116.hgt` (SRTM tile)
+- `data/l2_topo/全国DEM数据.tif`
 
-### L3 Urban Data (`l3_urban/`)
+说明：L2 通过窗口读取，不会一次性把全国 DEM 全部加载到内存。
 
-Building and urban structure data:
+### L3（城市层）
 
-- **Building Shapefiles** (.shp): Building footprints with heights
-  - Format: ESRI Shapefile
-  - Attributes: Building height, material (optional)
-  - Source: [OpenStreetMap](https://www.openstreetmap.org/), local GIS databases
-  - Example: `buildings.shp`
+- 原始建筑矢量：`data/l3_urban/shanxisheng/陕西省/*.shp`
+- 可运行缓存（西安）：`data/l3_urban/xian/tiles_60/`
 
-Current repository includes Shaanxi-wide raw building shapefiles at:
-- `data/l3_urban/shanxisheng/陕西省/*.shp`
-and Xi'an ready-to-use cache at:
-- `data/l3_urban/xian/tiles_60/`
+说明：L3 主流程需要 tile cache，直接读取原始 shp 不参与在线计算。
 
-- **3D City Models** (.obj, .gltf): Detailed 3D urban models (V2.0)
-  - Format: OBJ, glTF, or CityGML
-  - For advanced ray tracing
+## 3. 当前数据完整性（基于仓库现状）
 
-## Data Acquisition
+| 项 | 现状 | 说明 |
+|---|---|---|
+| TLE | 有 | 2025-01-01 数据可用 |
+| IONEX | 有 | 可用于 TEC 查询 |
+| ERA5 pressure-level | 有 | 可提取 IWV |
+| ERA5 single-level | 脚本有 | 变量下载脚本已提供，是否下载由本地数据决定 |
+| DEM | 有 | 全国覆盖 |
+| L3 原始 shp | 有 | 陕西省范围 |
+| L3 多城市 cache | 部分 | 现成 cache 主要是西安 |
 
-### Free Data Sources
+## 4. 数据准备建议
 
-1. **Satellite TLE**: [CelesTrak](https://celestrak.com/NORAD/elements/)
-2. **DEM Data**: [USGS Earth Explorer](https://earthexplorer.usgs.gov/)
-3. **Building Data**: [OpenStreetMap](https://www.openstreetmap.org/)
+1. 以 `configs/mission_config.yaml` 为准，保证路径可解析。
+2. 所有大文件保持在 `data/` 下并使用 `.gitignore` 规则。
+3. 若做省域/全年批量，优先按时间片和区域片分批下载、分批计算。
 
-### Data Preparation
+## 5. 获取示例
 
-#### TLE Files
-
-Download TLE data for your satellite:
+首次使用 ERA5 脚本前，先安装依赖：
 
 ```bash
-# Example: Download Starlink TLE
-wget https://celestrak.com/NORAD/elements/starlink.txt -O data/l1_space/starlink.tle
+pip install cdsapi
 ```
 
-#### DEM Data
+TLE（示例）：
 
-1. Download SRTM tiles covering your area of interest
-2. Place .hgt files in `data/l2_topo/`
-3. Update `mission_config.yaml` with file path
-
-#### Building Shapefiles
-
-Extract from OpenStreetMap:
-
-```python
-import osmnx as ox
-
-# Download buildings for a location
-buildings = ox.geometries_from_place("Beijing, China", tags={'building': True})
-buildings.to_file("data/l3_urban/buildings.shp")
+```bash
+wget https://celestrak.com/NORAD/elements/starlink.txt -O data/2025_0101.tle
 ```
 
-## Data Format Requirements
+ERA5 pressure-level 下载请求（需要 CDS 账号和 API key）：
 
-### TLE Format
-
-```
-STARLINK-1007
-1 44713U 19074A   24001.50000000  .00001234  00000-0  12345-3 0  9999
-2 44713  53.0000 123.4567 0001234  12.3456 347.6543 15.12345678123456
+```bash
+python data/l1_space/data/cds.py
 ```
 
-### Antenna Pattern CSV
+ERA5 pressure-level 批量下载（推荐）：
 
-```csv
-elevation,azimuth,gain_dbi
-0,0,0.0
-10,0,5.2
-20,0,12.5
-...
+```bash
+python data/l1_space/data/cds_pressure_batch.py \
+  --year 2025 --months 1-12 --chunk-mode month \
+  --area 40,106,32,112 \
+  --output-dir data/l1_space/data/era5_pressure_levels_2025
 ```
 
-### Building Shapefile Attributes
+ERA5 single-level 下载请求：
 
-Required attributes:
-- `geometry`: Polygon geometry
-- `height`: Building height in meters
-
-Optional attributes:
-- `material`: Building material (concrete, glass, metal)
-- `floors`: Number of floors
-
-## .gitignore
-
-Large data files are excluded from git by default. Add your data files to `.gitignore`:
-
-```
-data/**/*.tif
-data/**/*.hgt
-data/**/*.nc
-data/**/*.shp
+```bash
+python data/l1_space/data/cds_single_level.py
 ```
 
-## Data Citation
+IONEX 批量下载：
 
-When using external data sources, please cite appropriately:
+```bash
+python data/l1_space/data/NASAcddis.py
+```
 
-- **SRTM**: NASA Shuttle Radar Topography Mission
-- **OpenStreetMap**: © OpenStreetMap contributors
-- **CelesTrak**: Dr. T.S. Kelso, CelesTrak
+## 6. 相关文档
 
-## Notes
-
-- Keep data files organized by layer
-- Use consistent coordinate reference systems (WGS84 recommended)
-- Document data sources and acquisition dates
-- Validate data quality before simulation
+- L1 数据细节：[l1_space/README.md](l1_space/README.md)
+- L2 DEM 细节：[l2_topo/README.md](l2_topo/README.md)
+- L3 建筑数据与 cache：[l3_urban/README.md](l3_urban/README.md)

@@ -12,6 +12,8 @@ Pipeline:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.engine import RadioMapAggregator
 from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
-from src.layers.base import LayerContext
+from src.layers.l3_urban import compute_nlos_mask
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,10 +42,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--norad-id", action="append", default=None,
                         help="Limit candidate satellites to specific NORAD ID; can be repeated")
+    parser.add_argument("--top-k-sats", type=int, default=1,
+                        help="Use top-K visible satellites by elevation at city center (default: 1)")
+    parser.add_argument("--sat-workers", type=int, default=1,
+                        help="Parallel workers for per-tile top-K satellite evaluation (default: 1)")
     parser.add_argument("--max-tiles", type=int, default=None,
                         help="Optional debug cap for number of tiles")
     parser.add_argument("--save-components", action="store_true",
                         help="Also save city-wide L2 and L3 mosaics")
+    parser.add_argument("--use-config-incident-dir", action="store_true",
+                        help="Use layers.l3_urban.incident_dir from config (default: dynamic satellite az/el)")
+    parser.add_argument("--legacy-l2-origin", action="store_true",
+                        help="Use legacy L2 origin (tile origin as 25.6km SW corner). "
+                             "Default uses center-aligned L2 patch for each tile.")
     return parser.parse_args()
 
 
@@ -91,6 +102,22 @@ def _tile_placement(origin_x: float,
     r1 = r0 + tile_px
     c1 = c0 + tile_px
     return r0, r1, c0, c1
+
+
+def _shift_origin_by_km_sw(origin_lat: float,
+                           origin_lon: float,
+                           shift_km_south: float,
+                           shift_km_west: float) -> Tuple[float, float]:
+    """
+    Shift a SW-corner lat/lon by given south/west distances in km.
+
+    Uses local spherical approximation; sufficient for city-scale offsets.
+    """
+    lat_per_km = 1.0 / 111.0
+    lon_per_km = 1.0 / max(111.0 * math.cos(math.radians(origin_lat)), 1e-6)
+    out_lat = float(origin_lat - shift_km_south * lat_per_km)
+    out_lon = float(origin_lon - shift_km_west * lon_per_km)
+    return out_lat, out_lon
 
 
 def main() -> None:
@@ -158,56 +185,234 @@ def main() -> None:
         if target_norad_ids:
             l1.target_norad_ids = target_norad_ids
 
-    # L1 once: macro baseline template for each 256m tile
-    l1_comp = l1.compute_components(
-        timestamp=timestamp,
+    top_k_sats = max(int(args.top_k_sats), 1)
+    visible_sats = l1.get_visible_satellites(
         origin_lat=city_center_lat,
         origin_lon=city_center_lon,
+        timestamp=timestamp,
         target_norad_ids=target_norad_ids,
+        max_count=top_k_sats,
     )
-    sat_info = l1_comp["satellite"]
+    if not visible_sats:
+        raise RuntimeError(
+            "No visible satellite found at city center for this timestamp."
+        )
 
-    l1_template = agg._interpolate_to_target(l1_comp["total"], l1.coverage_km).astype(np.float32)
-    l1_template_mean = float(np.mean(l1_template))
+    sat_bundles: List[Dict[str, object]] = []
+    l1_template_means: List[float] = []
+    for sat_rank, sat_pred in enumerate(visible_sats, start=1):
+        norad_id = str(sat_pred["norad_id"])
+        l1_comp = l1.compute_components(
+            timestamp=timestamp,
+            origin_lat=city_center_lat,
+            origin_lon=city_center_lon,
+            target_norad_ids=[norad_id],
+        )
+        sat_info = l1_comp["satellite"]
+        l1_template = agg._interpolate_to_target(l1_comp["total"], l1.coverage_km).astype(np.float32)
+        l1_template_means.append(float(np.mean(l1_template)))
 
-    incident_dir = l3_cfg.get("incident_dir")
-    if incident_dir is None:
-        incident_dir = {
-            "az_deg": sat_info["azimuth_deg"],
-            "el_deg": sat_info["elevation_deg"],
+        if args.use_config_incident_dir and l3_cfg.get("incident_dir") is not None:
+            incident_dir = l3_cfg.get("incident_dir")
+            incident_source = "config"
+        else:
+            incident_dir = {
+                "az_deg": sat_info["azimuth_deg"],
+                "el_deg": sat_info["elevation_deg"],
+            }
+            incident_source = "satellite"
+
+        ctx_extras = {
+            "incident_dir": incident_dir,
+            "satellite_azimuth_deg": sat_info["azimuth_deg"],
+            "satellite_elevation_deg": sat_info["elevation_deg"],
+            "satellite_slant_range_km": sat_info.get("slant_range_km"),
+            "satellite_altitude_km": sat_info.get("alt_m", 0.0) / 1000.0,
+            "target_norad_ids": [norad_id],
         }
+        sat_bundles.append({
+            "rank": sat_rank,
+            "norad_id": norad_id,
+            "sat_info": sat_info,
+            "l1_template": l1_template,
+            "ctx_extras": ctx_extras,
+        })
 
-    ctx = LayerContext.from_any({
-        "incident_dir": incident_dir,
-        "satellite_azimuth_deg": sat_info["azimuth_deg"],
-        "satellite_elevation_deg": sat_info["elevation_deg"],
-        "satellite_slant_range_km": sat_info.get("slant_range_km"),
-        "satellite_altitude_km": sat_info.get("alt_m", 0.0) / 1000.0,
-        "target_norad_ids": target_norad_ids,
-    })
+    lead_sat_info = sat_bundles[0]["sat_info"]
 
     city_composite = np.zeros((rows, cols), dtype=np.float32)
     city_l3 = np.zeros((rows, cols), dtype=np.float32)
     city_l2 = np.zeros((rows, cols), dtype=np.float32)
 
-    total_tiles = len(df)
-    for idx, row in enumerate(df.itertuples(index=False), start=1):
-        ox = float(row.origin_x)
-        oy = float(row.origin_y)
+    # L2 is a 25.6 km patch; target city tile is 0.256 km.
+    # To keep the tile physically aligned with the center-crop interpolation,
+    # shift L2 patch SW so that the city tile center is near the L2 patch center.
+    # This captures surrounding terrain context while avoiding the legacy 12.8 km misalignment.
+    l2_shift_km = max((float(l2.coverage_km) - 0.256) * 0.5, 0.0)
 
-        l3_tile = l3.compute(origin_lat=oy, origin_lon=ox, timestamp=timestamp, context=ctx)
-        l2_tile = l2.compute(origin_lat=oy, origin_lon=ox, timestamp=timestamp, context=ctx)
-        l2_interp = agg._interpolate_to_target(l2_tile, l2.coverage_km).astype(np.float32)
+    sat_workers = max(int(args.sat_workers), 1)
+    use_sat_parallel = len(sat_bundles) > 1 and sat_workers > 1
+    sat_executor: Optional[cf.ThreadPoolExecutor] = None
 
-        comp_tile = l1_template + l2_interp + l3_tile
+    if use_sat_parallel:
+        sat_executor = cf.ThreadPoolExecutor(max_workers=min(sat_workers, len(sat_bundles)))
 
-        r0, r1, c0, c1 = _tile_placement(ox, oy, x_to_idx, y_to_idx, ny, tile_px)
-        city_composite[r0:r1, c0:c1] = comp_tile
-        city_l3[r0:r1, c0:c1] = l3_tile
-        city_l2[r0:r1, c0:c1] = l2_interp
+    def _compute_l3_tile(
+        height_m: np.ndarray,
+        occ: Optional[np.ndarray],
+        incident_dir: Dict[str, float],
+    ) -> np.ndarray:
+        # Reuse already-loaded tile cache to avoid repeated disk IO in top-K loop.
+        nlos_mask = compute_nlos_mask(height_m, incident_dir)
+        l3_tile = np.zeros(height_m.shape, dtype=np.float32)
+        l3_tile[nlos_mask] = float(l3.nlos_loss_db)
+        if l3.occ_loss_db is not None:
+            occ_mask = occ.astype(bool) if occ is not None else (height_m > 0)
+            l3_tile[occ_mask] = np.maximum(l3_tile[occ_mask], float(l3.occ_loss_db))
+        return l3_tile
 
-        if idx == 1 or idx % 100 == 0 or idx == total_tiles:
-            print(f"[city] processed {idx}/{total_tiles} tiles")
+    def _compute_l2_interp_from_dem(
+        dem_patch: np.ndarray,
+        sat_info: Dict[str, float],
+    ) -> np.ndarray:
+        sat_elevation_deg = float(sat_info.get("elevation_deg", l2.sat_elevation_deg))
+        sat_azimuth_deg = float(sat_info.get("azimuth_deg", l2.sat_azimuth_deg))
+        sat_slant_range_km = sat_info.get("slant_range_km")
+        sat_altitude_km = float(sat_info.get("alt_m", 0.0) / 1000.0) if sat_info.get("alt_m") is not None else float(l2.satellite_altitude_km)
+        if sat_slant_range_km is None:
+            sat_slant_range_km = l2._estimate_slant_range_km(sat_elevation_deg, sat_altitude_km)
+
+        occlusion_mask, excess_height_m, obstacle_distance_m = l2._compute_occlusion_vectorized(
+            dem_patch,
+            sat_elevation_deg=sat_elevation_deg,
+            sat_azimuth_deg=sat_azimuth_deg,
+            return_profile=True,
+        )
+        l2_tile = l2._apply_diffraction_loss(
+            dem=dem_patch,
+            mask=occlusion_mask,
+            excess_height_m=excess_height_m,
+            obstacle_distance_m=obstacle_distance_m,
+            sat_slant_range_m=max(float(sat_slant_range_km) * 1000.0, 1.0),
+        )
+        return agg._interpolate_to_target(l2_tile, l2.coverage_km).astype(np.float32, copy=False)
+
+    def _compute_candidate(
+        sat_bundle: Dict[str, object],
+        dem_patch: np.ndarray,
+        l3_height: np.ndarray,
+        l3_occ: Optional[np.ndarray],
+        static_l3_tile: Optional[np.ndarray],
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if static_l3_tile is None:
+            incident_dir = sat_bundle["ctx_extras"]["incident_dir"]
+            l3_tile_local = _compute_l3_tile(
+                height_m=l3_height,
+                occ=l3_occ,
+                incident_dir=incident_dir,
+            )
+        else:
+            l3_tile_local = static_l3_tile
+
+        l2_interp_local = _compute_l2_interp_from_dem(dem_patch, sat_bundle["sat_info"])
+        l1_template_local = sat_bundle["l1_template"]
+        comp_local = (l1_template_local + l2_interp_local + l3_tile_local).astype(np.float32, copy=False)
+        return comp_local, l2_interp_local, l3_tile_local
+
+    try:
+        total_tiles = len(df)
+        for idx, row in enumerate(df.itertuples(index=False), start=1):
+            ox = float(row.origin_x)
+            oy = float(row.origin_y)
+            if args.legacy_l2_origin:
+                l2_origin_lat, l2_origin_lon = oy, ox
+            else:
+                l2_origin_lat, l2_origin_lon = _shift_origin_by_km_sw(
+                    origin_lat=oy,
+                    origin_lon=ox,
+                    shift_km_south=l2_shift_km,
+                    shift_km_west=l2_shift_km,
+                )
+
+            l2._validate_bounds(l2_origin_lat, l2_origin_lon)
+            dem_patch = l2._load_dem_patch(l2_origin_lat, l2_origin_lon)
+            dem_patch = np.asarray(dem_patch, dtype=np.float32)
+            l3_height, l3_occ = l3._load_tile_cache({"lat": oy, "lon": ox})
+            l3_height = np.asarray(l3_height, dtype=np.float32)
+            l3_occ = None if l3_occ is None else np.asarray(l3_occ)
+
+            if len(sat_bundles) == 1:
+                only = sat_bundles[0]
+                comp_tile, l2_interp, l3_tile = _compute_candidate(
+                    sat_bundle=only,
+                    dem_patch=dem_patch,
+                    l3_height=l3_height,
+                    l3_occ=l3_occ,
+                    static_l3_tile=None,
+                )
+            else:
+                static_l3_tile: Optional[np.ndarray] = None
+                if args.use_config_incident_dir:
+                    static_l3_tile = _compute_l3_tile(
+                        height_m=l3_height,
+                        occ=l3_occ,
+                        incident_dir=sat_bundles[0]["ctx_extras"]["incident_dir"],
+                    )
+
+                if sat_executor is not None:
+                    futures = [
+                        sat_executor.submit(
+                            _compute_candidate,
+                            sat_bundle,
+                            dem_patch,
+                            l3_height,
+                            l3_occ,
+                            static_l3_tile,
+                        )
+                        for sat_bundle in sat_bundles
+                    ]
+                    sat_results = [f.result() for f in futures]
+                else:
+                    sat_results = [
+                        _compute_candidate(
+                            sat_bundle=sat_bundle,
+                            dem_patch=dem_patch,
+                            l3_height=l3_height,
+                            l3_occ=l3_occ,
+                            static_l3_tile=static_l3_tile,
+                        )
+                        for sat_bundle in sat_bundles
+                    ]
+
+                best_comp: Optional[np.ndarray] = None
+                best_l2: Optional[np.ndarray] = None
+                best_l3: Optional[np.ndarray] = None
+                for comp_candidate, l2_candidate, l3_candidate in sat_results:
+                    if best_comp is None:
+                        best_comp = comp_candidate.copy()
+                        best_l2 = l2_candidate.copy()
+                        best_l3 = l3_candidate.copy()
+                    else:
+                        improved = comp_candidate < best_comp
+                        best_comp = np.where(improved, comp_candidate, best_comp)
+                        best_l2 = np.where(improved, l2_candidate, best_l2)
+                        best_l3 = np.where(improved, l3_candidate, best_l3)
+
+                assert best_comp is not None and best_l2 is not None and best_l3 is not None
+                comp_tile = best_comp.astype(np.float32, copy=False)
+                l2_interp = best_l2.astype(np.float32, copy=False)
+                l3_tile = best_l3.astype(np.float32, copy=False)
+
+            r0, r1, c0, c1 = _tile_placement(ox, oy, x_to_idx, y_to_idx, ny, tile_px)
+            city_composite[r0:r1, c0:c1] = comp_tile
+            city_l3[r0:r1, c0:c1] = l3_tile
+            city_l2[r0:r1, c0:c1] = l2_interp
+
+            if idx == 1 or idx % 100 == 0 or idx == total_tiles:
+                print(f"[city] processed {idx}/{total_tiles} tiles")
+    finally:
+        if sat_executor is not None:
+            sat_executor.shutdown(wait=True)
 
     stamp = timestamp.strftime("%Y%m%dT%H%M%SZ")
     base = f"{args.output_prefix}_{stamp}"
@@ -228,15 +433,16 @@ def main() -> None:
     _geo_ticks_for_mosaic(ax, rows, cols, lon_west, lon_east, lat_south, lat_north)
     ax.set_title(
         "Xi'an City-Wide Full-Physics Radiomap\n"
-        f"{timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')} | NORAD {sat_info.get('norad_id','N/A')} "
-        f"(az={sat_info.get('azimuth_deg', float('nan')):.2f}°, el={sat_info.get('elevation_deg', float('nan')):.2f}°)",
+        f"{timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')} | "
+        f"Top-{len(sat_bundles)} sats @ center, lead NORAD {lead_sat_info.get('norad_id','N/A')} "
+        f"(az={lead_sat_info.get('azimuth_deg', float('nan')):.2f}°, el={lead_sat_info.get('elevation_deg', float('nan')):.2f}°)",
         fontsize=12,
         fontweight="bold",
     )
 
     stats = [
         f"mosaic={ny}x{nx} tiles ({rows}x{cols} px)",
-        f"L1 template mean/std={l1_template_mean:.3f}/{float(np.std(l1_template)):.3f} dB",
+        f"L1 template mean range={min(l1_template_means):.3f}~{max(l1_template_means):.3f} dB",
         f"L2 city mean/std={float(np.mean(city_l2)):.3f}/{float(np.std(city_l2)):.3f} dB",
         f"L3 city mean/std={float(np.mean(city_l3)):.3f}/{float(np.std(city_l3)):.3f} dB",
         f"Composite mean/std={float(np.mean(city_composite)):.3f}/{float(np.std(city_composite)):.3f} dB",
@@ -269,6 +475,14 @@ def main() -> None:
         print(f"  L2 NPY   : {out_dir / (base + '_l2.npy')}")
         print(f"  L3 NPY   : {out_dir / (base + '_l3.npy')}")
     print(f"  City extent: lon {lon_west:.6f}~{lon_east:.6f}, lat {lat_south:.6f}~{lat_north:.6f}")
+    print(f"  Top-K sats       : {len(sat_bundles)}")
+    print("  Center sat list  : " + ", ".join(
+        f"#{int(b['rank'])}:{b['norad_id']}(el={float(b['sat_info'].get('elevation_deg', float('nan'))):.2f})"
+        for b in sat_bundles
+    ))
+    print(f"  L3 incident source: {incident_source}")
+    print(f"  L2 origin mode    : {'legacy' if args.legacy_l2_origin else 'center-aligned'}")
+    print(f"  Sat workers       : {sat_workers}")
     print(f"  Composite stats: mean={float(np.mean(city_composite)):.3f}, std={float(np.std(city_composite)):.3f}")
     print("=" * 76)
 

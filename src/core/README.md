@@ -1,106 +1,72 @@
-# src/core — 核心物理计算模块
+# src/core 说明
 
-提供网格坐标系统和 RF 传播物理公式，是所有层的计算基础。
+`src/core` 提供网格坐标与传播物理公式，是 L1/L2/L3 的公共基础。
 
-## 模块
+## 文件总览
 
-### `grid.py` — 网格坐标系统
+- `grid.py`
+  - `Grid` 类：像素与地理坐标转换
+  - 向量化网格函数：`get_grid_latlon()`、`get_azimuth_elevation()`
+- `physics.py`
+  - FSPL、大气损耗、电离层损耗、极化损耗
+  - 雨衰比衰减与斜路径近似
+  - 相控阵增益与波束宽度辅助函数
 
-**类：`Grid`**
+## 1. 网格模块 (`grid.py`)
 
-管理 256×256 像素网格与地理坐标之间的映射关系。
+### `Grid`
 
-| 方法 | 说明 |
-|------|------|
-| `pixel_to_latlon(i, j)` | 像素坐标 → (lat, lon) |
-| `latlon_to_pixel(lat, lon)` | (lat, lon) → 像素坐标 |
-| `get_distance_matrix()` | 返回每个像素到原点的距离矩阵（km），256×256 |
-| `get_pixel_centers()` | 返回完整像素中心坐标数组（shape: `N×N×2`） |
-| `is_within_bounds(i, j)` | 判断像素索引是否在网格范围内 |
+用于管理不同层的统一网格语义：
 
-网格以 `origin_lat/lon` 为中心，覆盖范围和分辨率由 `coverage_km` 和 `resolution_m` 决定。
+- 输入：`origin_lat/origin_lon/grid_size/coverage_km`
+- 输出：
+  - 像素 -> 经纬度
+  - 经纬度 -> 像素
+  - 距离矩阵
 
----
+### 向量化函数
 
-### `physics.py` — RF 传播物理公式
+- `get_grid_latlon(origin_lat, origin_lon, coverage_m=256000, grid_size=256)`
+  - 生成整张网格的 `lat/lon/x_m/y_m`
+- `get_azimuth_elevation(sat_x_m, sat_y_m, sat_alt_m, grid_x_m, grid_y_m)`
+  - 计算每像素到卫星的方位/仰角/斜距
 
-所有函数均支持标量和 NumPy 数组输入（完全向量化）。
+## 2. 物理模块 (`physics.py`)
 
-#### `free_space_path_loss(distance_km, frequency_ghz)`
+### 路损相关
 
-自由空间路径损耗（FSPL）。
+- `free_space_path_loss(distance_km, frequency_ghz)`
+- `fspl_db(slant_range_m, freq_hz)`
 
-```
-FSPL(dB) = 20·log₁₀(d) + 20·log₁₀(f) + 92.45
-```
+### 大气相关
 
-- `d`：距离（km）
-- `f`：频率（GHz）
+- `atmospheric_loss(elevation_angle_deg, frequency_ghz, rain_rate_mm_h=0.0)`
+  - 清空+雨衰近似
+- `atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2, rain_rate_mm_h=0.0)`
+  - 使用 IWV 的改进近似
+- `rain_specific_attenuation_db_per_km(...)`
+- `rain_attenuation_slant_path_db(...)`
 
----
+### 电离层与极化
 
-#### `atmospheric_loss(elevation_angle_deg, frequency_ghz, rain_rate_mm_h=0.0)`
+- `ionospheric_loss(frequency_ghz, tec=10.0)`
+- `polarization_loss(...)`
+- `polarization_loss_db(pol_mismatch_angle_deg)`
 
-大气衰减，ITU-R P.618 简化模型。
+### 天线与链路辅助
 
-- 仰角 ≤ 0° 时返回 999 dB（地平线以下）
-- 含频率/极化相关雨衰与斜路径修正（内部调用 `rain_attenuation_slant_path_db()`）
+- `gaussian_beam_gain_db(...)`
+- `phased_array_peak_gain_db(...)`
+- `phased_array_hpbw_deg(...)`
+- `thermal_noise_power_dbw(...)`
 
----
+## 3. 在项目中的调用关系
 
-#### `atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2)`
+- L1：调用 `get_grid_latlon/get_azimuth_elevation` + 大多数物理函数
+- L2：调用 `SPEED_OF_LIGHT` 计算衍射参数
+- L3：不直接依赖 `core` 公式，主要是几何遮挡
 
-基于 ERA5 积分水汽（IWV）的改进大气衰减，ITU-R P.836 近似。
+## 4. 当前精度边界
 
-```
-wet_zenith = 0.0173 · IWV · (f/10)  dB
-dry_zenith = 0.046 · (f/10)          dB
-loss = (dry + wet) / sin(elevation)
-```
-
-有 ERA5 数据时优先使用此函数。
-
----
-
-#### `ionospheric_loss(frequency_ghz, tec=10.0)`
-
-电离层效应，ITU-R P.531。
-
-- 频率 > 3 GHz 时返回 0（可忽略）
-- `tec`：总电子含量（TECU），默认 10.0，有 IONEX 数据时使用实测值
-
----
-
-#### `polarization_loss(tx_polarization, rx_polarization, cross_pol_discrimination_db=20.0)`
-
-极化失配损耗。
-
-| 组合 | 损耗 |
-|------|------|
-| 相同极化 | 0 dB |
-| H ↔ V 或 RHCP ↔ LHCP | `cross_pol_discrimination_db`（默认 20 dB） |
-| 线极化 ↔ 圆极化 | 3 dB |
-
----
-
-#### `combine_losses_db(*losses_db)`
-
-dB 域损耗叠加（直接求和）。
-
----
-
-## 导出接口
-
-```python
-from src.core import (
-    Grid,
-    free_space_path_loss,
-    atmospheric_loss,
-    atmospheric_loss_era5,
-    ionospheric_loss,
-    polarization_loss,
-    combine_losses_db,
-    db_to_linear,
-    linear_to_db,
-)
-```
+- 雨衰和气体吸收为工程近似，不是完整 ITU 全流程统计模型。
+- `ionospheric_loss` 是频率衰减近似，闪烁未并入主流程。

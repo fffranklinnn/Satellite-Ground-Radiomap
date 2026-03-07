@@ -52,6 +52,11 @@ from ..core.physics import (
 )
 from ..utils.ionex_loader import IonexLoader
 from ..utils.era5_loader import load_era5
+from ..utils.ionosphere import (
+    ipp_from_ground,
+    faraday_rotation_deg,
+    polarization_mismatch_loss_db,
+)
 
 
 # ── TLE helpers ───────────────────────────────────────────────────────────────
@@ -178,6 +183,19 @@ class L1MacroLayer(BaseLayer):
         pol_cfg = self.cfg.get("polarization", {})
         self.pol_mismatch_deg = float(pol_cfg.get("mismatch_angle_deg", 0.0))
         self.pol_loss_db = polarization_loss_db(self.pol_mismatch_deg)
+        self.pol_mode = str(pol_cfg.get("mode", "linear")).lower().strip()
+
+        iono_cfg = self.cfg.get("ionosphere", {})
+        self.use_ipp = bool(iono_cfg.get("use_ipp", True))
+        self.use_slant_tec = bool(iono_cfg.get("use_slant_tec", True))
+        self.iono_shell_height_km = float(iono_cfg.get("shell_height_km", 350.0))
+        self.max_mapping_factor = float(iono_cfg.get("max_mapping_factor", 8.0))
+        self.enable_faraday = bool(iono_cfg.get("enable_faraday", False))
+        self.faraday_linear_only = bool(iono_cfg.get("faraday_linear_only", True))
+        self.fallback_b_t = float(iono_cfg.get("fallback_b_t", 45e-6))
+        self.strict_data = bool(self.cfg.get("strict_data", self.cfg.get("strict_mode", False)))
+        self._geomag_backend = "uninitialized"
+        self._geomag_model = None
 
         target_ids = self.cfg.get("target_norad_ids", [])
         if isinstance(target_ids, (str, int, float)):
@@ -207,8 +225,12 @@ class L1MacroLayer(BaseLayer):
                     self.ionex = IonexLoader(str(ionex_path))
                     print(f"[L1] IONEX loaded: {ionex_path.name}")
                 except Exception as exc:
+                    if self.strict_data:
+                        raise RuntimeError(f"[L1] strict_data: failed to load IONEX ({ionex_path}): {exc}") from exc
                     print(f"[L1] IONEX unavailable ({exc}); using fallback TEC={self.default_tec:.1f}.")
             else:
+                if self.strict_data:
+                    raise FileNotFoundError(f"[L1] strict_data: IONEX file not found: {ionex_path}")
                 print(f"[L1] IONEX file not found: {ionex_path}; using fallback TEC={self.default_tec:.1f}.")
 
         self.era5 = None
@@ -219,6 +241,8 @@ class L1MacroLayer(BaseLayer):
             if self.era5 is not None:
                 print(f"[L1] ERA5 loaded: {era5_path.name}")
             else:
+                if self.strict_data:
+                    raise RuntimeError(f"[L1] strict_data: ERA5 unavailable or unreadable: {era5_path}")
                 print("[L1] ERA5 unavailable; using simplified atmospheric model.")
 
         self.ts = load.timescale()
@@ -365,14 +389,56 @@ class L1MacroLayer(BaseLayer):
 
         if self.ionex is not None:
             try:
-                tec_map = self.ionex.get_tec(epoch_sec, lat_grid, lon_grid)
+                tec_query_lat = lat_grid
+                tec_query_lon = lon_grid
+                mapping_factor = np.ones_like(lat_grid, dtype=np.float32)
+                if self.use_ipp:
+                    # get_azimuth_elevation returns incoming-wave azimuth; convert to
+                    # ground->satellite azimuth before IPP projection.
+                    az_to_sat = (azimuth_deg + 180.0) % 360.0
+                    tec_query_lat, tec_query_lon, mapping_factor = ipp_from_ground(
+                        lat_grid,
+                        lon_grid,
+                        az_to_sat,
+                        elevation_deg,
+                        shell_height_km=self.iono_shell_height_km,
+                        max_mapping_factor=self.max_mapping_factor,
+                    )
+
+                tec_vtec_map = self.ionex.get_tec(epoch_sec, tec_query_lat, tec_query_lon)
+                if self.use_slant_tec:
+                    tec_map = tec_vtec_map * mapping_factor
+                else:
+                    tec_map = tec_vtec_map
             except Exception as exc:
+                if self.strict_data:
+                    raise RuntimeError(f"[L1] strict_data: IONEX query failed at {sim_dt.isoformat()}: {exc}") from exc
                 print(f"[L1] IONEX query failed ({exc}); fallback TEC={self.default_tec:.1f}.")
+                tec_vtec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
                 tec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
         else:
+            tec_vtec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
             tec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
 
         iono_db = ionospheric_loss(self.frequency_ghz, tec_map)
+
+        pol_db = np.full_like(lat_grid, self.pol_loss_db, dtype=np.float32)
+        faraday_deg = np.zeros_like(lat_grid, dtype=np.float32)
+        b_parallel_t = 0.0
+        if self.enable_faraday and self.ionex is not None:
+            if (not self.faraday_linear_only) or self.pol_mode == "linear":
+                b_parallel_t = self._estimate_b_parallel_t(
+                    origin_lat=origin_lat,
+                    origin_lon=origin_lon,
+                    sat_azimuth_deg=float(sat_info["azimuth_deg"]),
+                    sat_elevation_deg=float(sat_info["elevation_deg"]),
+                    timestamp=sim_dt,
+                    sample_alt_km=self.iono_shell_height_km,
+                )
+                faraday_deg = faraday_rotation_deg(tec_map, b_parallel_t, self.freq_hz).astype(np.float32)
+                pol_db = polarization_mismatch_loss_db(
+                    self.pol_mismatch_deg + faraday_deg
+                ).astype(np.float32)
 
         if self.era5 is not None:
             try:
@@ -384,6 +450,8 @@ class L1MacroLayer(BaseLayer):
                     rain_rate_mm_h=rain_rate_mm_h,
                 )
             except Exception as exc:
+                if self.strict_data:
+                    raise RuntimeError(f"[L1] strict_data: ERA5 query failed at {sim_dt.isoformat()}: {exc}") from exc
                 print(f"[L1] ERA5 query failed ({exc}); fallback simplified atmospheric model.")
                 iwv_map = np.full_like(lat_grid, np.nan, dtype=np.float32)
                 atm_db = atmospheric_loss(elevation_deg, self.frequency_ghz, rain_rate_mm_h)
@@ -391,7 +459,7 @@ class L1MacroLayer(BaseLayer):
             iwv_map = np.full_like(lat_grid, np.nan, dtype=np.float32)
             atm_db = atmospheric_loss(elevation_deg, self.frequency_ghz, rain_rate_mm_h)
 
-        net_loss_db = fspl + atm_db + iono_db + self.pol_loss_db - gain_db
+        net_loss_db = fspl + atm_db + iono_db + pol_db - gain_db
 
         occlusion_mask = elevation_deg < self.MIN_ELEVATION_DEG
         net_loss_db[occlusion_mask] = self.NO_COVERAGE_LOSS_DB
@@ -407,11 +475,14 @@ class L1MacroLayer(BaseLayer):
             "atm": atm_db.astype(np.float32),
             "iono": iono_db.astype(np.float32),
             "gain": gain_db.astype(np.float32),
-            "pol": np.full_like(net_loss_db, self.pol_loss_db, dtype=np.float32),
+            "pol": pol_db.astype(np.float32),
+            "faraday_deg": faraday_deg.astype(np.float32),
+            "b_parallel_t": float(b_parallel_t),
             "elevation": elevation_deg.astype(np.float32),
             "azimuth": azimuth_deg.astype(np.float32),
             "slant_range_m": slant_range_m.astype(np.float32),
             "tec": tec_map.astype(np.float32),
+            "tec_vtec": tec_vtec_map.astype(np.float32),
             "iwv": iwv_map.astype(np.float32),
             "occlusion_mask": occlusion_mask,
             "satellite": sat_info,
@@ -540,6 +611,113 @@ class L1MacroLayer(BaseLayer):
         if max_count is not None and max_count > 0:
             visible = visible[:int(max_count)]
         return visible
+
+    @staticmethod
+    def _decimal_year(dt: datetime) -> float:
+        start = datetime(dt.year, 1, 1, tzinfo=dt.tzinfo)
+        end = datetime(dt.year + 1, 1, 1, tzinfo=dt.tzinfo)
+        frac = (dt - start).total_seconds() / max((end - start).total_seconds(), 1.0)
+        return dt.year + frac
+
+    def _query_geomagnetic_ned_t(
+        self,
+        lat_deg: float,
+        lon_deg: float,
+        alt_km: float,
+        timestamp: datetime,
+    ) -> Optional[Tuple[float, float, float]]:
+        """
+        Query geomagnetic field (N, E, D) in Tesla at one point.
+
+        Backends are optional; returns None when unavailable.
+        """
+        if self._geomag_backend == "uninitialized":
+            self._geomag_backend = "none"
+
+            try:
+                import geomag as geomag_pkg  # type: ignore
+                if hasattr(geomag_pkg, "GeoMag"):
+                    self._geomag_model = geomag_pkg.GeoMag()
+                    self._geomag_backend = "geomag"
+                elif hasattr(geomag_pkg, "geomag") and hasattr(geomag_pkg.geomag, "GeoMag"):
+                    self._geomag_model = geomag_pkg.geomag.GeoMag()
+                    self._geomag_backend = "geomag"
+            except Exception:
+                pass
+
+            if self._geomag_backend == "none":
+                try:
+                    import igrf as igrf_pkg  # type: ignore
+                    self._geomag_model = igrf_pkg
+                    self._geomag_backend = "igrf"
+                except Exception:
+                    pass
+
+        if self._geomag_backend == "geomag":
+            try:
+                # geomag commonly expects altitude in feet.
+                result = self._geomag_model.GeoMag(  # type: ignore[attr-defined]
+                    float(lat_deg),
+                    float(lon_deg),
+                    h=float(alt_km) * 3280.839895,
+                )
+                bn = float(getattr(result, "bx", np.nan)) * 1e-9
+                be = float(getattr(result, "by", np.nan)) * 1e-9
+                bd = float(getattr(result, "bz", np.nan)) * 1e-9
+                if np.isfinite(bn) and np.isfinite(be) and np.isfinite(bd):
+                    return bn, be, bd
+            except Exception:
+                return None
+
+        if self._geomag_backend == "igrf":
+            try:
+                decimal_year = self._decimal_year(timestamp)
+                model = self._geomag_model
+                if hasattr(model, "igrf_value"):
+                    vals = model.igrf_value(float(lat_deg), float(lon_deg), float(alt_km), float(decimal_year))
+                    if isinstance(vals, (list, tuple)) and len(vals) >= 6:
+                        # Common ordering: D, I, H, X, Y, Z, F
+                        bn, be, bd = float(vals[3]), float(vals[4]), float(vals[5])
+                        return bn * 1e-9, be * 1e-9, bd * 1e-9
+            except Exception:
+                return None
+
+        return None
+
+    def _estimate_b_parallel_t(
+        self,
+        origin_lat: float,
+        origin_lon: float,
+        sat_azimuth_deg: float,
+        sat_elevation_deg: float,
+        timestamp: datetime,
+        sample_alt_km: float,
+    ) -> float:
+        """
+        Estimate LOS-parallel magnetic component (Tesla).
+        """
+        ned = self._query_geomagnetic_ned_t(
+            lat_deg=origin_lat,
+            lon_deg=origin_lon,
+            alt_km=sample_alt_km,
+            timestamp=timestamp,
+        )
+        if ned is None:
+            if self.strict_data and self.enable_faraday:
+                raise RuntimeError(
+                    "[L1] strict_data: Faraday rotation enabled but geomagnetic backend unavailable."
+                )
+            # Conservative fallback when no geomagnetic backend is available.
+            return float(self.fallback_b_t)
+
+        bn, be, bd = ned
+        az_r = np.deg2rad(float(sat_azimuth_deg))
+        el_r = np.deg2rad(float(sat_elevation_deg))
+
+        los_n = np.cos(el_r) * np.cos(az_r)
+        los_e = np.cos(el_r) * np.sin(az_r)
+        los_d = -np.sin(el_r)
+        return float(bn * los_n + be * los_e + bd * los_d)
 
     # V2.0 stubs
     def _compute_ionospheric_scintillation_db(self, *_) -> np.ndarray:

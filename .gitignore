@@ -87,6 +87,7 @@ data/**/*.parquet
 data/l3_urban/*/tiles*/
 data/l3_urban/*/catalog/
 data/l3_urban/*/tile_list_*.csv
+data/l1_space/data/era5_pressure_levels_2025_day
 
 # Raw shapefile archives
 data/l3_urban/shanxisheng/

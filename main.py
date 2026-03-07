@@ -25,6 +25,10 @@ from src.engine import RadioMapAggregator
 from src.layers.base import LayerContext
 from src.utils import setup_logger, SimulationLogger, plot_radio_map, plot_layer_comparison
 from src.utils import get_profiler
+from src.utils.data_validation import (
+    validate_data_integrity,
+    format_data_validation_report,
+)
 
 
 def load_config(config_file: str) -> dict:
@@ -131,15 +135,18 @@ def run_simulation(config: dict, output_dir: Path):
         logger.info(f"Processing timestamp: {current_time}")
         logger.info(f"{'='*60}")
 
-        # Compute composite radio map
+        # Compute radio map (single computation path)
         sim_logger.log_layer_start("Aggregator", current_time)
-        composite_map = aggregator.aggregate(origin_lat, origin_lon, current_time, context)
+        contributions = None
+        if config['output']['save_individual_layers']:
+            contributions = aggregator.get_layer_contributions(origin_lat, origin_lon, current_time, context)
+            composite_map = contributions['composite']
+        else:
+            composite_map = aggregator.aggregate(origin_lat, origin_lon, current_time, context)
         sim_logger.log_layer_end("Aggregator")
 
         # Get individual layer contributions
         if config['output']['save_individual_layers']:
-            contributions = aggregator.get_layer_contributions(origin_lat, origin_lon, current_time, context)
-
             # Save individual layers
             if l1_layer and 'l1' in contributions:
                 l1_file = output_dir / f"l1_macro_{frame_count:04d}.png"
@@ -218,12 +225,39 @@ def main():
         default=None,
         help='Output directory (default: from config file)'
     )
+    parser.add_argument(
+        '--strict-data',
+        action='store_true',
+        help='Fail on missing/unreadable configured data and disable silent fallbacks in L1'
+    )
+    parser.add_argument(
+        '--check-data-only',
+        action='store_true',
+        help='Run data integrity checks and exit without simulation'
+    )
 
     args = parser.parse_args()
 
     # Load configuration
     print(f"Loading configuration from: {args.config}")
     config = load_config(args.config)
+
+    # Data integrity checks
+    strict_from_cfg = bool(config.get('data_validation', {}).get('strict', False))
+    strict_data = bool(args.strict_data or strict_from_cfg)
+    if strict_data:
+        config.setdefault('layers', {}).setdefault('l1_macro', {})['strict_data'] = True
+
+    report = validate_data_integrity(config=config, project_root=Path(__file__).parent, strict=strict_data)
+    print(format_data_validation_report(report))
+
+    if report['errors']:
+        print("\nData integrity check failed; aborting.")
+        sys.exit(2)
+
+    if args.check_data_only:
+        print("\nData integrity check passed.")
+        sys.exit(0)
 
     # Determine output directory
     if args.output:

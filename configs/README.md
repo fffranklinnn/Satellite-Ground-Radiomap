@@ -1,46 +1,157 @@
-# Configuration Directory
+# configs 目录说明
 
-SG-MRM 仿真配置文件目录。
+本目录存放 SG-MRM 的 YAML 配置文件。
 
-## `mission_config.yaml`
+当前主配置：`mission_config.yaml`。
 
-主配置文件，定义所有仿真参数：
+## 1. 设计原则
 
-| 配置段 | 说明 |
-|--------|------|
-| `origin` | 仿真中心坐标（当前：西安 34.3416°N, 108.9398°E） |
-| `rf` | 射频参数：频率 14.5 GHz (Ku-band)、发射功率、极化 |
-| `time` | 仿真时间范围与步长 |
-| `layers.l1_macro` | L1 宏观层：TLE 文件、IONEX/ERA5 数据路径 |
-| `layers.l2_topo` | L2 地形层：DEM 文件路径、卫星仰角/方位角 |
-| `layers.l3_urban` | L3 城市层：tile cache 路径、NLoS/占用损耗、入射方向 |
-| `output` | 输出目录、格式、DPI |
-| `performance` | 性能分析开关 |
-| `logging` | 日志级别与文件 |
+- 顶层只定义运行参数，不放业务代码。
+- `layers.*` 与 `src/layers/*` 一一对应。
+- 脚本可在命令行覆盖部分配置（例如时间、频率、雨率、区域）。
 
-## 使用
+## 2. `mission_config.yaml` 结构
 
-```bash
-# 使用默认配置
-python main.py
+### `origin`
 
-# 指定配置文件
-python main.py --config configs/mission_config.yaml --output output/
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `latitude` | float | 区域中心纬度 |
+| `longitude` | float | 区域中心经度 |
+| `altitude_m` | float | 站点海拔（当前主流程未强依赖） |
 
-# 自定义配置
-cp configs/mission_config.yaml configs/my_config.yaml
-# 编辑 my_config.yaml 后运行
-python main.py --config configs/my_config.yaml
+### `time`
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `start` | ISO string | 开始时间 |
+| `end` | ISO string | 结束时间 |
+| `step_hours` | float/int | 小时步长 |
+| `timezone` | string | 文档标注用途，代码默认按 UTC 处理 |
+
+### `layers.l1_macro`
+
+核心字段：
+
+| 字段 | 说明 |
+|---|---|
+| `enabled` | 是否启用 L1 |
+| `grid_size/coverage_km/resolution_m` | L1 网格参数 |
+| `frequency_ghz` | 载频（GHz） |
+| `tle_file` | TLE 文件路径（必需） |
+| `ionex_file` | IONEX 文件路径（可选） |
+| `era5_file` | ERA5 pressure-level NetCDF（可选） |
+| `rain_rate_mm_h` | 雨率输入（mm/h） |
+| `tec` | IONEX 缺失时默认 TEC |
+
+`ionosphere` 子配置：
+
+| 字段 | 说明 |
+|---|---|
+| `use_ipp` | 使用 IPP 穿刺点查 TEC |
+| `use_slant_tec` | 使用映射因子 VTEC->STEC |
+| `shell_height_km` | 薄壳高度（默认 350km） |
+| `max_mapping_factor` | 映射因子上限 |
+| `enable_faraday` | 是否叠加 Faraday 旋转失配 |
+| `faraday_linear_only` | 仅在线极化模式下启用 Faraday |
+| `fallback_b_t` | 无地磁后端时的 `B_parallel` 回退值 |
+
+`polarization` 子配置：
+
+| 字段 | 说明 |
+|---|---|
+| `mismatch_angle_deg` | 基础极化失配角 |
+| `mode` | `linear` / `circular` |
+
+### `layers.l2_topo`
+
+| 字段 | 说明 |
+|---|---|
+| `enabled` | 是否启用 L2 |
+| `dem_file` | DEM GeoTIFF 路径 |
+| `frequency_ghz` | 频率（影响衍射参数） |
+| `satellite_elevation_deg` | 默认仰角 |
+| `satellite_azimuth_deg` | 默认方位角 |
+| `satellite_altitude_km` | slant-range 估算回退高度 |
+
+说明：脚本或上下文可覆盖仰角/方位/斜距。
+
+### `layers.l3_urban`
+
+| 字段 | 说明 |
+|---|---|
+| `enabled` | 是否启用 L3 |
+| `tile_cache_root` | tile cache 根目录 |
+| `nlos_loss_db` | NLoS 像素损耗 |
+| `occ_loss_db` | 建筑占用像素损耗（可选） |
+| `incident_dir` | 默认入射方向（可被上下文覆盖） |
+
+`incident_dir` 推荐格式：
+
+```yaml
+incident_dir:
+  az_deg: 180.0
+  el_deg: 45.0
 ```
 
-## 各层启用/禁用
+### `output`
+
+| 字段 | 说明 |
+|---|---|
+| `directory` | 默认输出目录 |
+| `save_individual_layers` | 是否保存 L1/L2/L3 分层图 |
+| `save_composite` | 是否保存复合图 |
+| `dpi` | PNG DPI |
+| `colormap` | 可视化配色 |
+
+### `data_validation`
+
+| 字段 | 说明 |
+|---|---|
+| `strict` | 严格数据模式。也可由 `main.py --strict-data` 覆盖开启 |
+
+### `performance` / `logging`
+
+- `performance.enable_profiling`：开启后打印性能摘要。
+- `logging.level/log_file`：日志等级与文件路径。
+
+## 3. 常见配置修改场景
+
+修改时间范围：
+
+```yaml
+time:
+  start: "2025-01-01T00:00:00"
+  end: "2025-01-31T23:00:00"
+  step_hours: 1
+```
+
+关闭某一层：
+
+```yaml
+layers:
+  l3_urban:
+    enabled: false
+```
+
+固定卫星候选：
 
 ```yaml
 layers:
   l1_macro:
-    enabled: true    # TLE 文件为必需依赖
-  l2_topo:
-    enabled: true    # 无 DEM 文件时自动返回零损耗
-  l3_urban:
-    enabled: true    # 需要预构建 tile cache
+    target_norad_ids: ["25544", "44713"]
+```
+
+## 4. 运行方式
+
+```bash
+python main.py --config configs/mission_config.yaml --output output/
+```
+
+或复制为自定义配置再运行。
+
+数据完整性检查（不跑仿真）：
+
+```bash
+python main.py --config configs/mission_config.yaml --check-data-only
 ```

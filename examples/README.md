@@ -1,76 +1,26 @@
-# Examples Directory
+# examples 说明
 
-This directory contains example scripts demonstrating how to use the SG-MRM system.
+本目录提供示例脚本模板，用于说明如何通过代码调用 SG-MRM 组件。
 
-## Available Examples
+## 1. 当前文件
 
-### 1. basic_usage.py
+- `basic_usage.py`
+- `v1_static_link.py`
 
-Basic usage example showing how to:
-- Create layers programmatically
-- Initialize the aggregator
-- Compute a single radio map
-- Visualize results
+## 2. 使用建议
 
-**Run:**
-```bash
-python examples/basic_usage.py
-```
+这些示例最初用于早期版本演示。当前主流程以 `configs/mission_config.yaml` + `main.py` / `scripts/*` 为主，若直接运行示例，建议先按当前接口检查并同步以下项：
 
-### 2. v1_static_link.py
+1. `L1MacroLayer` 需要有效 `tle_file`。
+2. `L3UrbanLayer` 需要有效 `tile_cache_root` 与 `incident_dir`。
+3. `RadioMapAggregator.aggregate()` 需要显式传入 `origin_lat, origin_lon`。
 
-V1.0 milestone example demonstrating static link closure with:
-- L1 Macro Layer (satellite positioning)
-- L3 Urban Layer (building shadows)
-- Composite map generation
+## 3. 推荐替代入口
 
-**Run:**
-```bash
-python examples/v1_static_link.py
-```
+- 主流程：`python main.py --config configs/mission_config.yaml`
+- 单次全物理图：`python scripts/generate_full_radiomap.py`
+- 批量任务：`python scripts/batch_city_experiments.py`
 
-## Output
+## 4. 如果要维护示例
 
-All examples save their output to the `output/examples/` or `output/v1_static_link/` directories.
-
-Output includes:
-- PNG visualizations of radio maps
-- Layer comparison plots
-- Raw numpy arrays (.npy files) for further processing
-
-## Creating Custom Examples
-
-To create your own example:
-
-1. Copy one of the existing examples
-2. Modify the configuration parameters
-3. Add your custom processing logic
-4. Run and visualize results
-
-Example template:
-
-```python
-#!/usr/bin/env python3
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.layers import L1MacroLayer
-from src.engine import RadioMapAggregator
-from src.utils import plot_radio_map
-
-def main():
-    # Your code here
-    pass
-
-if __name__ == '__main__':
-    main()
-```
-
-## Requirements
-
-Make sure you have installed all dependencies:
-
-```bash
-pip install -r requirements.txt
-```
+建议把示例改造成“读取主配置后只覆盖少量参数”的形式，这样能避免与主接口长期漂移。

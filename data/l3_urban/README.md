@@ -1,49 +1,51 @@
-# L3 Urban Layer Data
+# data/l3_urban 说明
 
-L3 城市层数据目录，存放建筑高度栅格 tile cache 用于 NLoS 遮挡计算。
+L3 城市层使用“原始建筑矢量 + 预构建 tile cache”两段式数据流程。
 
-## 当前数据（陕西省原始建筑 + 西安缓存）
+## 1. 当前目录角色
 
-### `shanxisheng/陕西省/` — 陕西省原始建筑 shp 数据
+### `shanxisheng/陕西省/`
 
-- **数据形态**: 原始建筑矢量数据（`.shp/.dbf/.shx/.prj/.cpg`）
-- **规模**: 70 套 shapefile（覆盖陕西省内多数城市区域）
-- **坐标系**: 以 `EPSG:3857` 为主
-- **用途**: 作为 L3 的原始输入，先预处理为 catalog，再构建 tile cache
+- 内容：陕西省范围建筑 shapefile（多城市）
+- 作用：原始来源数据，不直接参与在线 L3 计算
 
-### `xian/tiles_60/` — 西安市区 tile cache
+### `xian/tiles_60/`
 
-- **tile 数量**: 1320 tiles（40×33 网格）
-- **覆盖范围**: 34.22°~34.31°N, 108.90°~108.99°E（西安市区核心区）
-- **tile 尺寸**: 256 m × 256 m，分辨率 1 m/pixel
-- **每个 tile 包含**:
-  - `H.npy` — 建筑高度栅格 (256×256 float32, 米)
-  - `Occ.npy` — 建筑占用掩码 (256×256 bool)
-  - `meta.json` — tile 元数据（origin 坐标、CRS 等）
+- 内容：西安可运行 tile cache（`H.npy`, `Occ.npy`, `meta.json`）
+- 作用：L3 运行时直接读取
 
-### `xian/catalog/buildings_xian.parquet` — 建筑目录
+### `xian/catalog/buildings_xian.parquet`
 
-- **来源**: 陕西省 70 个 shapefile（EPSG:3857）
-- **记录数**: 359,691 栋建筑
-- **标准字段**: `building_id`, `geometry`, `height_m`, `source_name`
-- **高度范围**: 约 3~105 m
+- 作用：构建 cache 过程中的中间目录数据
 
-## Tile cache 构建流程
+## 2. 为什么要有 cache
+
+L3 每个 tile 计算需要 1m 分辨率的 256x256 栅格输入。直接在运行时解析 shp 开销高且不稳定，因此采用离线构建：
+
+1. shp -> parquet catalog
+2. catalog + tile list -> tile cache
+3. 在线仿真只读 cache
+
+## 3. 构建流程
+
+### 步骤 1：预处理目录
 
 ```bash
-# 1. 预处理 shapefile → parquet 目录
 python tools/preprocess_buildings_catalog.py \
   --input-root data/l3_urban/shanxisheng/陕西省 \
   --output data/l3_urban/xian/catalog/buildings_xian.parquet
+```
 
-# 2. 构建 tile cache
+### 步骤 2：生成 tile cache
+
+```bash
 python tools/build_l3_tile_cache.py \
   --catalog data/l3_urban/xian/catalog/buildings_xian.parquet \
   --tile-list data/l3_urban/xian/tile_list_xian_60.csv \
   --output-root data/l3_urban/xian/tiles_60/
 ```
 
-## 配置
+## 4. 运行配置
 
 ```yaml
 layers:
@@ -57,14 +59,14 @@ layers:
       el_deg: 45.0
 ```
 
-## 扩展到其他城市
+## 5. 扩展到陕西省其他城市
 
-1. 准备建筑 shapefile（需包含 Height 字段）
-2. 生成 tile list CSV（`origin_x,origin_y` 格式，EPSG:4326）
-3. 运行上述构建流程，修改 `--output-root` 路径
-4. 更新 `mission_config.yaml` 中的 `tile_cache_root`
+1. 从 `shanxisheng/陕西省/` 选出目标城市范围
+2. 生成该城市 tile list
+3. 构建该城市 cache
+4. 将 `tile_cache_root` 指向新 cache
 
-## 说明
+## 6. 已知边界
 
-- 当前仓库中可直接用于 L3 计算的 cache 主要是西安（`xian/tiles_60/`）。
-- 若要扩展到陕西省其他城市，需要基于 `shanxisheng/陕西省/` 原始 shp 重新生成对应城市的 `tile_list` 和 `tile cache`。
+- 仓库内现成可直接跑的大规模 cache 主要是西安。
+- 省域级 L3 全量拼接依赖各城市 cache 是否完备。

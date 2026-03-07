@@ -66,6 +66,14 @@ def parse_args() -> argparse.Namespace:
                         help="Print planned commands without executing")
     parser.add_argument("--norad-id", action="append", default=None,
                         help="Limit candidate satellites to NORAD ID; can be repeated")
+    parser.add_argument("--top-k-sats", type=int, default=1,
+                        help="Use top-K visible satellites by elevation at city center (forwarded)")
+    parser.add_argument("--sat-workers", type=int, default=1,
+                        help="Per-tile satellite parallel workers forwarded to city script")
+    parser.add_argument("--use-config-incident-dir", action="store_true",
+                        help="Forward to city script: force config incident_dir for L3")
+    parser.add_argument("--legacy-l2-origin", action="store_true",
+                        help="Forward to city script: use legacy L2 origin behavior")
     return parser.parse_args()
 
 
@@ -328,6 +336,14 @@ def main() -> None:
         if args.norad_id:
             for nid in args.norad_id:
                 cmd.extend(["--norad-id", str(nid)])
+        if args.top_k_sats is not None and int(args.top_k_sats) > 1:
+            cmd.extend(["--top-k-sats", str(int(args.top_k_sats))])
+        if args.sat_workers is not None and int(args.sat_workers) > 1:
+            cmd.extend(["--sat-workers", str(int(args.sat_workers))])
+        if args.use_config_incident_dir:
+            cmd.append("--use-config-incident-dir")
+        if args.legacy_l2_origin:
+            cmd.append("--legacy-l2-origin")
 
         assigned_gpu: Optional[str] = None
         if gpu_ids:

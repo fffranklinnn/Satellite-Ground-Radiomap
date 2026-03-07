@@ -19,6 +19,17 @@ from .performance import (
     timeit,
     profile_layer_computation
 )
+from .ionosphere import (
+    ipp_from_ground,
+    faraday_rotation_deg,
+    polarization_mismatch_loss_db,
+)
+from .data_validation import (
+    validate_data_integrity,
+    format_data_validation_report,
+    load_yaml_config,
+    resolve_project_path,
+)
 
 __all__ = [
     'IonexLoader',
@@ -38,5 +49,12 @@ __all__ = [
     'PerformanceProfiler',
     'get_profiler',
     'timeit',
-    'profile_layer_computation'
+    'profile_layer_computation',
+    'ipp_from_ground',
+    'faraday_rotation_deg',
+    'polarization_mismatch_loss_db',
+    'validate_data_integrity',
+    'format_data_validation_report',
+    'load_yaml_config',
+    'resolve_project_path',
 ]

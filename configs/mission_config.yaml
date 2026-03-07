@@ -48,6 +48,17 @@ layers:
     rain_rate_mm_h: 0.0         # Rain rate (0 for clear sky)
     # Ionospheric parameters
     tec: 10.0                   # Fallback TEC in TECU (used when ionex_file is absent)
+    ionosphere:
+      use_ipp: true             # Use IPP (350 km thin-shell) instead of ground point for TEC query
+      use_slant_tec: true       # Convert VTEC -> STEC with obliquity factor
+      shell_height_km: 350.0
+      max_mapping_factor: 8.0
+      enable_faraday: false     # Optional Faraday rotation + polarization mismatch
+      faraday_linear_only: true # Apply only when polarization.mode == "linear"
+      fallback_b_t: 4.5e-5      # Fallback |B_parallel| (Tesla) when geomagnetic backend unavailable
+    polarization:
+      mismatch_angle_deg: 0.0
+      mode: "linear"            # linear / circular
     # Real data sources (2025-01-01)
     ionex_file: "data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
     era5_file: "data/l1_space/data/data_stream-oper_stepType-instant.nc"   # optional; graceful fallback if absent
@@ -85,6 +96,10 @@ output:
   save_composite: true          # Save composite map
   dpi: 150                      # DPI for PNG output
   colormap: "viridis"           # Matplotlib colormap
+
+# Data validation settings
+data_validation:
+  strict: false                 # Strict mode can also be enabled via main.py --strict-data
 
 # Performance settings
 performance:

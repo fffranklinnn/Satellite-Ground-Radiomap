@@ -60,27 +60,13 @@ class RadioMapAggregator:
         Returns:
             256x256 float32 array of total loss values in dB
         """
-        composite = np.zeros((self.target_grid_size, self.target_grid_size),
-                             dtype=np.float64)
-
-        if self.l1_layer is not None:
-            l1_loss = self.l1_layer.compute(
-                origin_lat, origin_lon, timestamp=timestamp, context=context)
-            composite += self._interpolate_to_target(
-                l1_loss, self.l1_layer.coverage_km)
-
-        if self.l2_layer is not None:
-            l2_loss = self.l2_layer.compute(
-                origin_lat, origin_lon, timestamp=timestamp, context=context)
-            composite += self._interpolate_to_target(
-                l2_loss, self.l2_layer.coverage_km)
-
-        if self.l3_layer is not None:
-            l3_loss = self.l3_layer.compute(
-                origin_lat, origin_lon, timestamp=timestamp, context=context)
-            composite += l3_loss
-
-        return composite.astype(np.float32)
+        contributions = self.get_layer_contributions(
+            origin_lat=origin_lat,
+            origin_lon=origin_lon,
+            timestamp=timestamp,
+            context=context,
+        )
+        return contributions['composite']
 
     def _interpolate_to_target(self,
                                layer_output: np.ndarray,
@@ -130,25 +116,31 @@ class RadioMapAggregator:
             Dict with keys 'l1', 'l2', 'l3', 'composite' (whichever are enabled).
         """
         contributions = {}
+        composite = np.zeros((self.target_grid_size, self.target_grid_size), dtype=np.float64)
 
         if self.l1_layer is not None:
             l1_loss = self.l1_layer.compute(
                 origin_lat, origin_lon, timestamp=timestamp, context=context)
-            contributions['l1'] = self._interpolate_to_target(
+            l1_interp = self._interpolate_to_target(
                 l1_loss, self.l1_layer.coverage_km)
+            contributions['l1'] = l1_interp.astype(np.float32)
+            composite += l1_interp
 
         if self.l2_layer is not None:
             l2_loss = self.l2_layer.compute(
                 origin_lat, origin_lon, timestamp=timestamp, context=context)
-            contributions['l2'] = self._interpolate_to_target(
+            l2_interp = self._interpolate_to_target(
                 l2_loss, self.l2_layer.coverage_km)
+            contributions['l2'] = l2_interp.astype(np.float32)
+            composite += l2_interp
 
         if self.l3_layer is not None:
-            contributions['l3'] = self.l3_layer.compute(
+            l3_loss = self.l3_layer.compute(
                 origin_lat, origin_lon, timestamp=timestamp, context=context)
+            contributions['l3'] = l3_loss.astype(np.float32)
+            composite += l3_loss
 
-        contributions['composite'] = self.aggregate(
-            origin_lat, origin_lon, timestamp, context)
+        contributions['composite'] = composite.astype(np.float32)
 
         return contributions
 

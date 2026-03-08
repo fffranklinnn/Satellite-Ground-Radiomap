@@ -74,23 +74,27 @@ python data/l1_space/data/cds.py
 ERA5 pressure-level（批量，推荐）：
 
 ```bash
-# 2025 全年，按月拆分（默认）
+# 2025 全年，按月拆分；直接输出可运行的 NetCDF（.nc）
 python data/l1_space/data/cds_pressure_batch.py \
   --year 2025 \
   --months 1-12 \
   --chunk-mode month \
   --area 40,106,32,112 \
-  --output-dir data/l1_space/data/era5_pressure_levels_2025
+  --data-format netcdf \
+  --download-format unarchived \
+  --output-dir data/l1_space/data/era5_pressure_levels_2025_nc
 ```
 
 ```bash
-# 如果按月仍超限，改为按日拆分
+# 如果按月仍超限，改为按日拆分（仍输出 .nc）
 python data/l1_space/data/cds_pressure_batch.py \
   --year 2025 \
   --months 1-12 \
   --chunk-mode day \
   --area 40,106,32,112 \
-  --output-dir data/l1_space/data/era5_pressure_levels_2025_day
+  --data-format netcdf \
+  --download-format unarchived \
+  --output-dir data/l1_space/data/era5_pressure_levels_2025_day_nc
 ```
 
 脚本特性：
@@ -99,6 +103,7 @@ python data/l1_space/data/cds_pressure_batch.py \
 - 支持 `--retries` 和 `--retry-wait-sec` 自动重试
 - 支持 `--dry-run` 先检查请求计划
 - 输出 `manifest_*.jsonl` 记录每个分片状态
+- 默认 `--download-format zip` 偏向归档；若要直接给 `era5_file` 使用，建议显式 `--download-format unarchived`
 
 ERA5 single-level：
 
@@ -115,7 +120,7 @@ layers:
   l1_macro:
     tle_file: "data/2025_0101.tle"
     ionex_file: "data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
-    era5_file: "data/l1_space/data/data_stream-oper_stepType-instant.nc"
+    era5_file: "data/l1_space/data/era5_pressure_levels_2025_nc/era5_pressure_levels_202501.nc"
 ```
 
 ## 6. 已知边界

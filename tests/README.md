@@ -29,6 +29,7 @@ tests/
 ├── test_engine/
 │   └── test_aggregator.py
 └── test_utils/
+    ├── test_data_validation.py
     ├── test_ionex_loader.py
     └── test_era5_loader.py
 ```
@@ -47,10 +48,12 @@ tests/
   - IONEX 解析、空间插值、时间插值
 - `test_era5_loader.py`
   - ERA5 IWV 读取与插值
+- `test_data_validation.py`
+  - 配置数据完整性检查（缺失关键数据、全层关闭场景）
 
 ## 4. 当前测试规模
 
-- `pytest --collect-only`：当前收集到 34 个测试用例。
+- `pytest --collect-only -q`：当前分支（2026-03-07）收集到 37 个测试用例。
 
 ## 5. 建议补充
 

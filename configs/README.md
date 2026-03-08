@@ -99,10 +99,22 @@ incident_dir:
 | 字段 | 说明 |
 |---|---|
 | `directory` | 默认输出目录 |
+| `format` | 预留字段（当前主流程未直接读取） |
 | `save_individual_layers` | 是否保存 L1/L2/L3 分层图 |
 | `save_composite` | 是否保存复合图 |
 | `dpi` | PNG DPI |
 | `colormap` | 可视化配色 |
+
+### 顶层兼容字段（当前主流程未直接消费）
+
+`mission_config.yaml` 中还包含以下字段，主要用于元信息或历史兼容：
+
+| 字段 | 当前状态 |
+|---|---|
+| `mission` | 元信息字段；当前 `main.py` 不读取 |
+| `rf` | 预留 RF 描述；当前频率等以 `layers.*` 为准 |
+| `satellite` | 早期结构兼容字段；当前卫星几何以 L1 配置 + TLE 计算为准 |
+| `output.format` | 预留字段；当前输出行为由 `save_individual_layers/save_composite` 决定 |
 
 ### `data_validation`
 

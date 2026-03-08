@@ -139,6 +139,7 @@ Practical optimization recommendations:
 - Config schema: [configs/README.md](configs/README.md)
 - Data and acquisition: [data/README.md](data/README.md)
 - Layer implementation notes: [src/layers/README.md](src/layers/README.md)
+- L3 cache tooling: [tools/README.md](tools/README.md)
 - Utility modules: [src/utils/README.md](src/utils/README.md)
 - Tests: [tests/README.md](tests/README.md)
 

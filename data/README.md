@@ -91,8 +91,16 @@ ERA5 pressure-level 批量下载（推荐）：
 python data/l1_space/data/cds_pressure_batch.py \
   --year 2025 --months 1-12 --chunk-mode month \
   --area 40,106,32,112 \
-  --output-dir data/l1_space/data/era5_pressure_levels_2025
+  --data-format netcdf \
+  --download-format unarchived \
+  --output-dir data/l1_space/data/era5_pressure_levels_2025_nc
 ```
+
+说明：
+
+- 运行时 `layers.l1_macro.era5_file` 读取的是 NetCDF 文件路径（`.nc`）。
+- `cds_pressure_batch.py` 默认 `--download-format zip`，会产生压缩包；压缩包不能直接作为 `era5_file`，需要先解压并指向解压后的 `.nc`。
+- 如果你更关注“可直接跑”，建议如上显式使用 `--download-format unarchived`。
 
 ERA5 single-level 下载请求：
 

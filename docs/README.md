@@ -24,4 +24,5 @@
 - 顶层说明（英文）：[../README.md](../README.md)
 - 顶层说明（中文）：[../README_CN.md](../README_CN.md)
 - 脚本说明：[../scripts/README.md](../scripts/README.md)
+- L3 工具链：[../tools/README.md](../tools/README.md)
 - 测试说明：[../tests/README.md](../tests/README.md)

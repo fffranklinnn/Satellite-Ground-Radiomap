@@ -43,6 +43,7 @@ from ..core.physics import (
     fspl_db,
     polarization_loss_db,
     gaussian_beam_gain_db,
+    parabolic_rolloff_gain_db,
     phased_array_peak_gain_db,
     phased_array_hpbw_deg,
     SPEED_OF_LIGHT,
@@ -180,6 +181,17 @@ class L1MacroLayer(BaseLayer):
             self.wavelength_m, self.element_spacing_m
         )
 
+        antenna_cfg = self.cfg.get("antenna_pattern", {}) or {}
+        self.antenna_pattern_model = str(
+            antenna_cfg.get("model", "parabolic_rolloff")
+        ).lower().strip()
+        theta_3db_default = max(0.5 * (self.hpbw_az_deg + self.hpbw_el_deg) * 3.0, 0.1)
+        self.theta_3db_deg = float(antenna_cfg.get("theta_3db_deg", theta_3db_default))
+        max_rolloff_db = antenna_cfg.get("max_rolloff_db", 30.0)
+        self.antenna_min_gain_db = None
+        if max_rolloff_db is not None:
+            self.antenna_min_gain_db = float(self.peak_gain_db - float(max_rolloff_db))
+
         pol_cfg = self.cfg.get("polarization", {})
         self.pol_mismatch_deg = float(pol_cfg.get("mismatch_angle_deg", 0.0))
         self.pol_loss_db = polarization_loss_db(self.pol_mismatch_deg)
@@ -203,6 +215,13 @@ class L1MacroLayer(BaseLayer):
         self.target_norad_ids: List[str] = [str(x) for x in target_ids]
         self.rain_rate_mm_h = float(self.cfg.get("rain_rate_mm_h", 0.0))
         self.default_tec = float(self.cfg.get("tec", 10.0))
+
+        # Multi-satellite interference configuration
+        interference_cfg = self.cfg.get("interference", {})
+        self.enable_interference = bool(interference_cfg.get("enable_interference", False))
+        self.tx_power_dbm = float(interference_cfg.get("tx_power_dbm", 40.0))
+        self.noise_floor_dbm = float(interference_cfg.get("noise_floor_dbm", -110.0))
+        self.max_interfering_sats = int(interference_cfg.get("max_interfering_sats", 20))
 
         # Resolve TLE file path
         tle_cfg = self.cfg.get("tle", {})
@@ -301,6 +320,55 @@ class L1MacroLayer(BaseLayer):
             dt = dt.replace(tzinfo=timezone.utc)
         self._sim_time = self.ts.from_datetime(dt)
 
+    @staticmethod
+    def _angular_difference_deg(a_deg: np.ndarray, b_deg: float) -> np.ndarray:
+        return ((np.asarray(a_deg, dtype=np.float64) - float(b_deg) + 180.0) % 360.0) - 180.0
+
+    def _compute_offaxis_angle_deg(self,
+                                   sat_x_m: float,
+                                   sat_y_m: float,
+                                   sat_alt_m: float,
+                                   x_m: np.ndarray,
+                                   y_m: np.ndarray) -> np.ndarray:
+        """Compute satellite-beam off-axis angle matrix relative to city-center boresight."""
+        vx0 = -float(sat_x_m)
+        vy0 = -float(sat_y_m)
+        vz0 = -float(sat_alt_m)
+        norm0 = max(float(np.sqrt(vx0 * vx0 + vy0 * vy0 + vz0 * vz0)), 1e-6)
+
+        vx = x_m - float(sat_x_m)
+        vy = y_m - float(sat_y_m)
+        vz = np.full_like(vx, -float(sat_alt_m), dtype=np.float64)
+        norm = np.sqrt(vx * vx + vy * vy + vz * vz)
+        dot = vx * vx0 + vy * vy0 + vz * vz0
+        cos_theta = np.clip(dot / np.maximum(norm * norm0, 1e-6), -1.0, 1.0)
+        return np.degrees(np.arccos(cos_theta)).astype(np.float32)
+
+    def _compute_antenna_gain_db(self,
+                                 sat_info: Dict[str, float],
+                                 azimuth_deg: np.ndarray,
+                                 elevation_deg: np.ndarray,
+                                 offaxis_theta_deg: np.ndarray) -> np.ndarray:
+        model = self.antenna_pattern_model
+        if model in {"legacy", "legacy_gaussian", "gaussian"}:
+            az_to_sat_deg = (azimuth_deg + 180.0) % 360.0
+            delta_az = self._angular_difference_deg(az_to_sat_deg, float(sat_info["azimuth_deg"]))
+            delta_el = float(sat_info["elevation_deg"]) - elevation_deg
+            return gaussian_beam_gain_db(
+                theta_az_deg=delta_az,
+                theta_el_deg=delta_el,
+                peak_gain_db=self.peak_gain_db,
+                hpbw_az_deg=self.hpbw_az_deg * 3.0,
+                hpbw_el_deg=self.hpbw_el_deg * 3.0,
+            )
+
+        return parabolic_rolloff_gain_db(
+            theta_deg=offaxis_theta_deg,
+            peak_gain_db=self.peak_gain_db,
+            theta_3db_deg=self.theta_3db_deg,
+            min_gain_db=self.antenna_min_gain_db,
+        )
+
     def compute(self,
                 origin_lat: float = None,
                 origin_lon: float = None,
@@ -308,10 +376,32 @@ class L1MacroLayer(BaseLayer):
                 context: Optional[LayerContext] = None,
                 **kwargs) -> np.ndarray:
         """
-        Compute L1 net-loss matrix (256x256, float32, dB).
+        Compute L1 net-loss matrix or SINR map (256x256, float32, dB).
 
-        Pixels with elevation < MIN_ELEVATION_DEG are set to NO_COVERAGE_LOSS_DB.
+        If enable_interference=True: returns SINR map (dB)
+        If enable_interference=False: returns traditional loss map (dB)
+
+        Pixels with elevation < MIN_ELEVATION_DEG are set to NO_COVERAGE_LOSS_DB or -inf (SINR mode).
         """
+        if origin_lat is None:
+            origin_lat = self.origin_lat
+        if origin_lon is None:
+            origin_lon = self.origin_lon
+
+        # Multi-satellite interference mode
+        if self.enable_interference:
+            sinr_db, metadata = self.compute_multisat_sinr(
+                origin_lat=origin_lat,
+                origin_lon=origin_lon,
+                timestamp=timestamp,
+                context=context
+            )
+            # Store metadata in context if available
+            if context is not None and hasattr(context, 'extras'):
+                context.extras['sinr_metadata'] = metadata
+            return sinr_db
+
+        # Traditional single-satellite loss mode (backward compatible)
         components = self.compute_components(
             origin_lat=origin_lat,
             origin_lon=origin_lon,
@@ -366,15 +456,18 @@ class L1MacroLayer(BaseLayer):
         azimuth_deg, elevation_deg, slant_range_m = get_azimuth_elevation(
             sat_x_m, sat_y_m, sat_info["alt_m"], x_m, y_m
         )
-
-        delta_el = sat_info["elevation_deg"] - elevation_deg
-        delta_az = np.zeros_like(azimuth_deg)
-        gain_db = gaussian_beam_gain_db(
-            theta_az_deg=delta_az,
-            theta_el_deg=delta_el,
-            peak_gain_db=self.peak_gain_db,
-            hpbw_az_deg=self.hpbw_az_deg * 3.0,
-            hpbw_el_deg=self.hpbw_el_deg * 3.0,
+        offaxis_theta_deg = self._compute_offaxis_angle_deg(
+            sat_x_m=sat_x_m,
+            sat_y_m=sat_y_m,
+            sat_alt_m=float(sat_info["alt_m"]),
+            x_m=x_m,
+            y_m=y_m,
+        )
+        gain_db = self._compute_antenna_gain_db(
+            sat_info=sat_info,
+            azimuth_deg=azimuth_deg,
+            elevation_deg=elevation_deg,
+            offaxis_theta_deg=offaxis_theta_deg,
         )
 
         fspl = fspl_db(slant_range_m, self.freq_hz)
@@ -481,6 +574,7 @@ class L1MacroLayer(BaseLayer):
             "elevation": elevation_deg.astype(np.float32),
             "azimuth": azimuth_deg.astype(np.float32),
             "slant_range_m": slant_range_m.astype(np.float32),
+            "offaxis_theta_deg": offaxis_theta_deg.astype(np.float32),
             "tec": tec_map.astype(np.float32),
             "tec_vtec": tec_vtec_map.astype(np.float32),
             "iwv": iwv_map.astype(np.float32),
@@ -553,6 +647,7 @@ class L1MacroLayer(BaseLayer):
                                origin_lon: float,
                                timestamp: Optional[datetime] = None,
                                min_elevation_deg: Optional[float] = None,
+                               max_elevation_deg: Optional[float] = None,
                                target_norad_ids: Optional[List[str]] = None,
                                max_count: Optional[int] = None) -> List[Dict[str, float]]:
         """
@@ -564,6 +659,7 @@ class L1MacroLayer(BaseLayer):
         observer = wgs84.latlon(origin_lat, origin_lon)
 
         min_el = self.MIN_ELEVATION_DEG if min_elevation_deg is None else float(min_elevation_deg)
+        max_el = None if max_elevation_deg is None else float(max_elevation_deg)
         filter_ids = target_norad_ids if target_norad_ids is not None else self.target_norad_ids
         if isinstance(filter_ids, (str, int, float)):
             filter_ids = [str(filter_ids)]
@@ -583,6 +679,8 @@ class L1MacroLayer(BaseLayer):
                 alt, az, dist = topocentric.altaz()
                 el_deg = float(alt.degrees)
                 if el_deg < min_el:
+                    continue
+                if max_el is not None and el_deg > max_el:
                     continue
 
                 alt_km = _get_sat_altitude_km(sat, self._sim_time)
@@ -728,3 +826,201 @@ class L1MacroLayer(BaseLayer):
 
     def _load_antenna_pattern_csv(self, pattern_file: str):
         return None
+
+    # ── Multi-satellite interference methods ──────────────────────────────────
+
+    def compute_multisat_sinr(self,
+                              origin_lat: float,
+                              origin_lon: float,
+                              timestamp: Optional[datetime] = None,
+                              context: Optional[LayerContext] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Calculate SINR map under multi-satellite co-channel interference.
+
+        Physical model:
+            SINR(dB) = 10*log10(P_signal / (P_interference + P_noise))
+
+        Where:
+            - P_signal: Received power from target satellite (linear domain, mW)
+            - P_interference: Sum of interference power from all other visible satellites (linear domain, mW)
+            - P_noise: Receiver noise power (linear domain, mW)
+
+        Args:
+            origin_lat: Grid center latitude (degrees)
+            origin_lon: Grid center longitude (degrees)
+            timestamp: Simulation time (UTC)
+            context: Optional layer context
+
+        Returns:
+            sinr_db: SINR map (256, 256) in dB
+            metadata: Dict containing target satellite info, interfering satellite list, etc.
+        """
+        self._resolve_sim_datetime(timestamp)
+
+        # 1. Get all visible satellites (sorted by elevation, descending)
+        visible_sats = self.get_visible_satellites(
+            origin_lat, origin_lon, timestamp,
+            min_elevation_deg=self.MIN_ELEVATION_DEG
+        )
+
+        if len(visible_sats) == 0:
+            return np.full((GRID_SIZE, GRID_SIZE), -np.inf, dtype=np.float32), {}
+
+        # 2. Select target satellite (highest elevation)
+        target_sat = visible_sats[0]
+
+        # 3. Calculate received power from target satellite (dBm → linear mW)
+        p_desired_dbm = self._compute_received_power(
+            target_sat, origin_lat, origin_lon, context
+        )
+        p_desired_linear = 10 ** (p_desired_dbm / 10.0)  # mW
+
+        # 4. Calculate interference power (linear domain sum)
+        p_interference_linear = np.zeros_like(p_desired_linear, dtype=np.float64)
+        interfering_sats = visible_sats[1:self.max_interfering_sats + 1]
+
+        for sat in interfering_sats:
+            p_int_dbm = self._compute_received_power(
+                sat, origin_lat, origin_lon, context
+            )
+            p_int_linear = 10 ** (p_int_dbm / 10.0)
+            p_interference_linear += p_int_linear
+
+        # 5. Calculate SINR (linear → dB domain)
+        p_noise_linear = 10 ** (self.noise_floor_dbm / 10.0)
+        sinr_linear = p_desired_linear / (p_interference_linear + p_noise_linear)
+        sinr_db = 10 * np.log10(np.maximum(sinr_linear, 1e-30))
+
+        # 6. Handle no-coverage regions
+        lat_grid, lon_grid, x_m, y_m = get_grid_latlon(origin_lat, origin_lon, L1_COVERAGE, GRID_SIZE)
+        slant_range, azimuth, elevation_deg = get_azimuth_elevation(
+            lat_grid, lon_grid,
+            target_sat["lat_deg"], target_sat["lon_deg"], target_sat["alt_m"]
+        )
+        occlusion_mask = elevation_deg < self.MIN_ELEVATION_DEG
+        sinr_db[occlusion_mask] = -np.inf
+
+        metadata = {
+            'target_sat_norad_id': target_sat['norad_id'],
+            'target_sat_elevation_deg': target_sat['elevation_deg'],
+            'num_interfering_sats': len(interfering_sats),
+            'interfering_sat_ids': [s['norad_id'] for s in interfering_sats],
+            'timestamp': self._sim_time.utc_datetime() if self._sim_time is not None else None
+        }
+
+        print(f"[L1] SINR computed | target: {target_sat['norad_id']} | "
+              f"interferers: {len(interfering_sats)} | "
+              f"SINR range: {sinr_db[~occlusion_mask].min():.1f}~{sinr_db[~occlusion_mask].max():.1f} dB")
+
+        return sinr_db.astype(np.float32), metadata
+
+    def _compute_received_power(self,
+                                sat_info: Dict[str, float],
+                                origin_lat: float,
+                                origin_lon: float,
+                                context: Optional[LayerContext] = None) -> np.ndarray:
+        """
+        Calculate received power from a single satellite across the grid.
+
+        Link budget:
+            P_rx(dBm) = P_tx(dBm) + G_tx(dB) + G_rx(dB) - FSPL(dB) - L_atm(dB) - L_iono(dB) - L_pol(dB)
+
+        Args:
+            sat_info: Satellite information dict (from get_visible_satellites)
+            origin_lat: Grid center latitude (degrees)
+            origin_lon: Grid center longitude (degrees)
+            context: Optional layer context
+
+        Returns:
+            rx_power_dbm: Received power map (256, 256) in dBm
+        """
+        # 1. Build geographic grid
+        lat_grid, lon_grid, x_m, y_m = get_grid_latlon(origin_lat, origin_lon, L1_COVERAGE, GRID_SIZE)
+
+        # 2. Calculate geometric parameters
+        slant_range, azimuth, elevation_deg = get_azimuth_elevation(
+            lat_grid, lon_grid,
+            sat_info["lat_deg"], sat_info["lon_deg"], sat_info["alt_m"]
+        )
+
+        # 3. Calculate FSPL
+        fspl = fspl_db(slant_range, self.freq_hz)
+
+        # 4. Calculate antenna gain
+        # Transmit side: satellite phased array pointing to ground
+        # Simplified assumption: all satellites use main beam pointing to grid center
+        # (Phase 2 will introduce beam scheduling and sidelobe modeling)
+        if self.antenna_pattern_model == "gaussian":
+            gain_db = gaussian_beam_gain_db(
+                azimuth, elevation_deg,
+                sat_info["azimuth_deg"], sat_info["elevation_deg"],
+                self.hpbw_az_deg, self.hpbw_el_deg,
+                self.peak_gain_db
+            )
+        else:  # parabolic_rolloff
+            # Calculate off-boresight angle (simplified: assume boresight points to grid center)
+            origin_slant, origin_az, origin_el = get_azimuth_elevation(
+                np.array([[origin_lat]]), np.array([[origin_lon]]),
+                sat_info["lat_deg"], sat_info["lon_deg"], sat_info["alt_m"]
+            )
+            # Off-boresight angle approximation (simplified for now)
+            theta_off_boresight = np.abs(elevation_deg - origin_el[0, 0])
+            gain_db = parabolic_rolloff_gain_db(
+                theta_off_boresight,
+                peak_gain_db=self.peak_gain_db,
+                theta_3db_deg=self.theta_3db_deg,
+                min_gain_db=self.antenna_min_gain_db
+            )
+
+        # Receive side: user terminal antenna (simplified as omnidirectional)
+        rx_gain_db = 0.0
+
+        # 5. Calculate atmospheric loss
+        if self.era5 is not None:
+            atm_db = atmospheric_loss_era5(
+                elevation_deg, self.frequency_ghz, self.era5,
+                lat_grid, lon_grid, self._sim_time.utc_datetime()
+            )
+        else:
+            atm_db = atmospheric_loss(elevation_deg, self.frequency_ghz, self.rain_rate_mm_h)
+
+        # 6. Calculate ionospheric loss
+        if self.ionex is not None:
+            # Use IPP-based TEC query
+            tec_vtec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
+            if self.use_ipp:
+                for i in range(GRID_SIZE):
+                    for j in range(GRID_SIZE):
+                        ipp_lat, ipp_lon = ipp_from_ground(
+                            lat_grid[i, j], lon_grid[i, j],
+                            sat_info["lat_deg"], sat_info["lon_deg"], sat_info["alt_m"],
+                            self.iono_shell_height_km * 1000.0
+                        )
+                        tec_vtec_map[i, j] = self.ionex.get_tec(
+                            ipp_lat, ipp_lon, self._sim_time.utc_datetime()
+                        )
+            else:
+                for i in range(GRID_SIZE):
+                    for j in range(GRID_SIZE):
+                        tec_vtec_map[i, j] = self.ionex.get_tec(
+                            lat_grid[i, j], lon_grid[i, j], self._sim_time.utc_datetime()
+                        )
+            iono_db = ionospheric_loss(self.frequency_ghz, tec_vtec_map)
+        else:
+            iono_db = ionospheric_loss(self.frequency_ghz, self.default_tec)
+
+        # 7. Calculate polarization loss
+        pol_db = self.pol_loss_db
+
+        # 8. Link budget
+        rx_power_dbm = (
+            self.tx_power_dbm +
+            gain_db +
+            rx_gain_db -
+            fspl -
+            atm_db -
+            iono_db -
+            pol_db
+        )
+
+        return rx_power_dbm

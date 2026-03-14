@@ -250,6 +250,32 @@ output/datasets/sgmrm_v1/pilot/
 2. 小规模条件 sweep（rain / satellite / timestamp）
 3. 后续正式数据集生成前的 schema 打磨
 
+### 使用这些 sample 时，应该如何理解
+
+#### 第一优先级：物理一致性
+
+在把 pilot 或正式数据集用于训练/分析之前，优先检查：
+
+1. `composite == l1 + l2 + l3`
+2. 条件轴变化是否符合物理直觉：
+   - 只改 `rain_rate_mm_h` 时，主要应表现为 L1 侧变化
+   - 只改 `satellite_norad_id` 时，主要应表现为几何/方向相关变化
+   - 只改 `timestamp_utc` 时，主要应表现为过境几何与环境变化
+3. 各层语义是否清晰：
+   - `l1` = 大尺度宏观贡献
+   - `l2` = 地形贡献
+   - `l3` = 城市建筑贡献
+
+#### 第二优先级：图像大小与物理分辨率
+
+当前 prototype / pilot 的 tile-level sample 应统一理解为：
+
+- image size: `256 × 256`
+- physical footprint: `256 m × 256 m`
+- effective resolution: **`1 m/px`**
+
+虽然 `l1` 和 `l2` 来自更粗尺度模型，但它们在导出时已经对齐到了 L3 tile grid，因此当前 `.npz` 中所有数组都应按 tile-level sample 来解释。
+
 ### 当前 pilot 约定
 
 - 先使用**单 tile、单时间、单卫星**收口导出格式

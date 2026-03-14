@@ -167,6 +167,82 @@ When combining layers with different coverages:
 2. **L2 → L3**: Extract center 256m region from 25.6km coverage
 3. Use bilinear interpolation for smooth transitions
 
+## Dataset sample spatial semantics (current implementation)
+
+This point is important for downstream dataset use.
+
+### Raw layer scale
+
+Each layer has its own native physical coverage:
+
+- L1: `256 km × 256 km` at `1000 m/px`
+- L2: `25.6 km × 25.6 km` at `100 m/px`
+- L3: `256 m × 256 m` at `1 m/px`
+
+### Exported tile-level sample scale
+
+When a tile-level dataset sample is exported from `generate_xian_city_radiomap.py`, the arrays written into `.npz` are all aligned onto the **L3 tile grid**.
+
+So for the current prototype / pilot dataset:
+
+- `grid_shape = [256, 256]`
+- physical footprint = **`256 m × 256 m`**
+- effective spatial resolution = **`1 m/px`**
+
+This means:
+- `l1` inside the sample is **not** an L1-native 1000 m/px raster anymore; it is the L1 contribution after being interpolated/aligned to the tile grid.
+- `l2` inside the sample is **not** an L2-native 100 m/px raster anymore; it is the L2 contribution after being interpolated/aligned to the tile grid.
+- `l3`, `height`, and `occ` remain naturally interpretable on the tile grid.
+
+In other words, the sample is best understood as:
+
+> a **tile-aligned multi-component physical sample**, not three raw-scale maps simply stored together.
+
+## Physical consistency checklist (current dataset view)
+
+For dataset construction, physical consistency should be checked before split strategy or large-scale expansion.
+
+### Level 0: export integrity
+
+These are structural invariants and should always hold:
+
+1. `composite == l1 + l2 + l3`
+2. all exported arrays share the same `grid_shape`
+3. `occ` remains binary
+4. manifest paths resolve to real sample files
+
+### Level 1: conditional consistency
+
+When only one condition axis changes, the resulting change should match physical intuition.
+
+#### Rain-rate sweep
+If only `rain_rate_mm_h` changes:
+- primary change should come from the L1-side attenuation chain
+- L2 terrain contribution should remain unchanged for the same tile/time/geometry
+- L3 building contribution should remain unchanged for the same tile
+
+#### Satellite sweep
+If only `satellite_norad_id` changes:
+- geometry-dependent L1 contribution should change
+- incident direction reaching L3 may change
+- L2/L3 effects may change indirectly because the viewing geometry changes
+- but static geographic metadata (`tile_id`, `origin_lat/lon`, `grid_shape`) should remain unchanged
+
+#### Timestamp sweep
+If only `timestamp_utc` changes:
+- the change should be explainable by time-varying geometry / atmosphere / ionosphere
+- not by random variation in array layout or sample structure
+
+### Level 2: semantic consistency
+
+The dataset should preserve clear meaning for each array:
+- `composite`: final tile-level loss map
+- `l1`: tile-aligned macro contribution
+- `l2`: tile-aligned terrain contribution
+- `l3`: tile-aligned urban contribution
+- `height`: tile-aligned urban geometry context
+- `occ`: tile-aligned occupancy / obstruction mask
+
 ## Performance Considerations
 
 ### V1.0 (Current)

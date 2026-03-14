@@ -105,6 +105,49 @@ def _append_manifest_jsonl(path: Path, record: Dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _refresh_manifest_annotations(path: Path) -> None:
+    if not path.exists():
+        return
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not records:
+        return
+
+    core_axes = ["tile_id", "timestamp_utc", "satellite_norad_id", "frequency_ghz", "rain_rate_mm_h"]
+    sweep_axes = ["rain_rate_mm_h", "satellite_norad_id", "timestamp_utc"]
+
+    for rec in records:
+        sample_id = str(rec.get("sample_id", ""))
+        rec["scenario_id"] = sample_id.split("__", 1)[1] if "__" in sample_id else sample_id
+        rec.setdefault("split_reason", "manual-pilot" if rec.get("split") == "pilot" else "unspecified")
+        rec["condition_axes"] = []
+        rec["condition_groups"] = []
+
+    for axis in sweep_axes:
+        groups = {}
+        for idx, rec in enumerate(records):
+            key = tuple((field, rec.get(field)) for field in core_axes if field != axis)
+            groups.setdefault(key, []).append(idx)
+
+        for key, idxs in groups.items():
+            values = {records[i].get(axis) for i in idxs}
+            if len(idxs) <= 1 or len(values) <= 1:
+                continue
+            group_tokens = [f"axis-{axis}"]
+            for field, value in key:
+                token = str(value).replace(" ", "_")
+                group_tokens.append(f"{field}-{token}")
+            group_id = "pilotgrp__" + "__".join(group_tokens)
+            for i in idxs:
+                records[i]["condition_axes"].append(axis)
+                records[i]["condition_groups"].append(group_id)
+
+    for rec in records:
+        rec["condition_axes"] = sorted(set(rec["condition_axes"]))
+        rec["condition_groups"] = sorted(set(rec["condition_groups"]))
+
+    path.write_text("".join(json.dumps(rec, ensure_ascii=False) + "\n" for rec in records), encoding="utf-8")
+
+
 def _geo_ticks_for_mosaic(ax, rows: int, cols: int,
                           lon_west: float, lon_east: float,
                           lat_south: float, lat_north: float,
@@ -571,7 +614,9 @@ def main() -> None:
             "composite_mean": float(np.mean(proto_comp)),
             "composite_std": float(np.std(proto_comp)),
         }
-        _append_manifest_jsonl(dataset_root / "manifest.jsonl", manifest_entry)
+        manifest_path = dataset_root / "manifest.jsonl"
+        _append_manifest_jsonl(manifest_path, manifest_entry)
+        _refresh_manifest_annotations(manifest_path)
         print(f"[dataset-prototype] sample_id={sample_id}")
         print(f"[dataset-prototype] npz={sample_npz}")
         print(f"[dataset-prototype] preview={preview_png}")

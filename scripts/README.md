@@ -334,15 +334,42 @@ sgmrm_v1__tile-<tile_id>__ts-<timestamp>__sat-<norad>__f-<freq>__rain-<rain>
 - `composite_mean`
 - `composite_std`
 
-#### 后续可扩展字段（暂不强制）
-- `condition_axes`
-- `condition_group_id`
+#### 当前建议升格字段（建议在正式数据集前固定）
 - `scenario_id`
 - `split_reason`
+- `condition_axes`
+- `condition_groups`
+
+说明：
+- `scenario_id`：去掉数据集版本前缀后的稳定场景标识，适合跨 split / 跨批次追踪同一物理样本。
+- `condition_axes`：当前样本参与了哪些 sweep 轴，例如 `rain_rate_mm_h`、`satellite_norad_id`、`timestamp_utc`。
+- `condition_groups`：**列表字段**，因为同一个 baseline 样本可以同时属于多个 matched sweep 组，不能假定只有一个 group id。
+- `split_reason`：记录样本为什么被放进某个 split，例如 `manual-pilot`、`tile-holdout`、`time-holdout`、`satellite-holdout`。
+
+#### 其余后续可扩展字段（暂不强制）
 - `tags`
 - `notes`
 
-### 7.5 Pilot sweep 约定
+### 7.5 Split / Group 规则（draft）
+
+#### 当前规则
+- `pilot/` 中所有样本的 `split = pilot`
+- 当前 `split_reason` 默认可记为 `manual-pilot`
+- pilot 阶段允许同一样本同时参与多个 sweep group，用于验证 schema 和条件轴设计
+
+#### 正式数据集建议
+1. **不要在 matched sweep 内部拆分 train/val/test**
+   - 同一个 `condition_groups` 中的成员应整体进入同一个 split，避免信息泄漏。
+2. **split 应优先按 group / scene 层做，而不是按单条 sample 随机切分**
+   - 推荐至少在 `scenario_id` 或 `condition_groups` 层级做切分。
+3. **优先采用较粗粒度的 holdout 规则**
+   - 例如：按 tile、按时间窗、按 satellite、按城市做 holdout。
+4. **pilot -> formal split 的过渡顺序**
+   - 先在 `pilot/` 验证 exporter、manifest 和 group 语义
+   - 再批量生成 `train/val/test/`
+   - 最后补 `split_reason` 记录切分策略来源
+
+### 7.6 Pilot sweep 约定
 
 当前 pilot 已经验证三类最小条件轴：
 

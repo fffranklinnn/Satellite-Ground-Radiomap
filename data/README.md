@@ -146,6 +146,12 @@ output/datasets/sgmrm_v1/
 1. `sample_id` 命名规则稳定
 2. `manifest.jsonl` 字段一致
 3. 数组键集合不随脚本运行随机漂移
+4. matched sweep 成员在 split 时保持同组，不被拆散
+
+当前推荐的组语义是：
+- `scenario_id`：稳定单样本场景标识
+- `condition_axes`：该样本参与的条件轴列表
+- `condition_groups`：该样本所属 matched sweep 组列表（注意是列表，不是单值）
 
 ## 7. 相关文档
 

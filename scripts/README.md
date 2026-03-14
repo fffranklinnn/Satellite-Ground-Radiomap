@@ -414,3 +414,192 @@ sgmrm_v1__tile-<tile_id>__ts-<timestamp>__sat-<norad>__f-<freq>__rain-<rain>
 - 目前仍以 **单 tile 小样本** 为主，不代表正式大规模数据集已完成。
 - `pilot/manifest.jsonl` 当前适合做 schema 验证，不宜直接当作最终训练索引。
 - 后续如果扩展到多 tile / 多城市 / 多卫星 / 多时间，需要优先保证 `sample_id` 和 manifest 规则继续一致。
+
+
+## 8. 物理一致性检查流程（可执行清单）
+
+在启动大规模数据生成前，建议先对当前 `output/datasets/sgmrm_v1/pilot/` 做一轮自动检查 + 一轮人工检查。
+
+### 8.1 自动检查（结构与导出正确性）
+
+目标：确认当前样本不是“格式对了但内容写乱了”。
+
+#### 自动检查项
+
+1. `composite == l1 + l2 + l3`
+2. 所有数组 shape 一致，且与 `grid_shape` 一致
+3. `occ` 仍是二值 `{0,1}`
+4. manifest 中的 `npz_path` / `preview_png_path` 可解析到真实文件
+5. `.npz` 固定包含：
+   - `composite`
+   - `l1`
+   - `l2`
+   - `l3`
+   - `height`
+   - `occ`
+
+#### 推荐执行方式（当前 pilot）
+
+```bash
+python - << 'PY'
+import json
+from pathlib import Path
+import numpy as np
+
+root = Path('output/datasets/sgmrm_v1/pilot')
+manifest = root / 'manifest.jsonl'
+records = [json.loads(x) for x in manifest.read_text().splitlines() if x.strip()]
+required = {'composite','l1','l2','l3','height','occ'}
+errors = []
+for rec in records:
+    npz_path = root / rec['npz_path']
+    preview_path = root / rec['preview_png_path']
+    if not npz_path.exists():
+        errors.append((rec['sample_id'], 'missing_npz'))
+        continue
+    if not preview_path.exists():
+        errors.append((rec['sample_id'], 'missing_preview'))
+    data = np.load(npz_path)
+    if set(data.files) != required:
+        errors.append((rec['sample_id'], 'bad_keys', sorted(data.files)))
+        continue
+    comp = data['composite']
+    l1 = data['l1']
+    l2 = data['l2']
+    l3 = data['l3']
+    occ = data['occ']
+    if comp.shape != (256, 256):
+        errors.append((rec['sample_id'], 'bad_shape', comp.shape))
+    if list(comp.shape) != rec['grid_shape']:
+        errors.append((rec['sample_id'], 'grid_shape_mismatch'))
+    if np.max(np.abs(comp - (l1 + l2 + l3))) > 1e-4:
+        errors.append((rec['sample_id'], 'composite_not_sum'))
+    if not set(np.unique(occ).tolist()).issubset({0, 1}):
+        errors.append((rec['sample_id'], 'occ_not_binary'))
+print('records', len(records))
+print('errors', len(errors))
+for e in errors[:20]:
+    print('ERROR', e)
+PY
+```
+
+#### 放行条件
+
+- `errors = 0`
+- 没有缺文件 / 缺数组键 / shape mismatch / `composite_not_sum`
+
+---
+
+### 8.2 条件轴单变量一致性检查（半自动）
+
+目标：确认“只改一个条件轴时，变化符合物理直觉”。
+
+#### A. Rain sweep
+
+固定：
+- `tile_id`
+- `timestamp_utc`
+- `satellite_norad_id`
+- `frequency_ghz`
+
+只改：
+- `rain_rate_mm_h`
+
+##### 预期
+- 主变化应来自 `l1`
+- `l2` 应保持不变
+- `l3` 应保持不变
+- `height/occ` 应保持不变
+
+##### 推荐检查
+
+```bash
+python - << 'PY'
+import numpy as np
+from pathlib import Path
+root = Path('output/datasets/sgmrm_v1/pilot/samples')
+base = np.load(root/'sgmrm_v1__tile-xian_idx000001__ts-20250101T060000Z__sat-51863__f-14p5__rain-0.npz')
+r10 = np.load(root/'sgmrm_v1__tile-xian_idx000001__ts-20250101T060000Z__sat-51863__f-14p5__rain-10.npz')
+r25 = np.load(root/'sgmrm_v1__tile-xian_idx000001__ts-20250101T060000Z__sat-51863__f-14p5__rain-25.npz')
+print('l2_diff_r10', float(np.max(np.abs(base['l2'] - r10['l2']))))
+print('l3_diff_r10', float(np.max(np.abs(base['l3'] - r10['l3']))))
+print('height_diff_r10', float(np.max(np.abs(base['height'] - r10['height']))))
+print('occ_diff_r10', int(np.max(np.abs(base['occ'] - r10['occ']))))
+print('l2_diff_r25', float(np.max(np.abs(base['l2'] - r25['l2']))))
+print('l3_diff_r25', float(np.max(np.abs(base['l3'] - r25['l3']))))
+PY
+```
+
+##### 放行条件
+- `l2/l3/height/occ` 对 rain sweep 基本不变
+- `composite` 变化可由 `l1` 变化解释
+
+---
+
+#### B. Satellite sweep
+
+固定：
+- `tile_id`
+- `timestamp_utc`
+- `rain_rate_mm_h`
+- `frequency_ghz`
+
+只改：
+- `satellite_norad_id`
+
+##### 预期
+- `l1` 应变化明显
+- `l2/l3` 可以因方向变化而变化
+- `height/occ` 必须保持不变
+
+##### 推荐检查
+- 看 manifest 里的 `satellite_elevation_deg` / `satellite_azimuth_deg` 是否明显变化
+- 检查 `height/occ` 是否完全一致
+
+---
+
+#### C. Timestamp sweep
+
+固定：
+- `tile_id`
+- `satellite_norad_id`
+- `rain_rate_mm_h`
+- `frequency_ghz`
+
+只改：
+- `timestamp_utc`
+
+##### 预期
+- 变化应主要由过境几何变化解释
+- `height/occ` 必须保持不变
+
+##### 推荐检查
+- 看 manifest 中同一星的 elevation / azimuth 是否随时间变化
+- 检查 `height/occ` 是否完全一致
+
+---
+
+### 8.3 人工检查（看图）
+
+自动检查只能保证结构正确，不能代替物理判断。
+
+建议至少做三组人工 spot-check：
+
+1. **Rain sweep 看图**
+   - 只改 rain 时，整体强弱应变化，但城市结构纹理不应无故跳变
+2. **Satellite sweep 看图**
+   - 换星后，宏观方向性和局部遮挡关系可以变化，但建筑底图语义不应漂移
+3. **Timestamp sweep 看图**
+   - 同一星过境前后，变化应与几何变化匹配，而不是随机噪声
+
+### 8.4 当前 pilot 的推荐验收门槛
+
+在继续进入大规模生成前，建议满足：
+
+- 自动检查 `errors = 0`
+- rain / satellite / timestamp 三类 sweep 都做过至少一次 spot-check
+- 已明确 sample 语义：
+  - image size = `256 × 256`
+  - physical footprint = `256 m × 256 m`
+  - effective resolution = `1 m/px`
+- 已明确这是一种 **tile-aligned multi-component physical sample**，而不是三张原始尺度图直接打包

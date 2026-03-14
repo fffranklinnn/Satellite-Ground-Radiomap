@@ -127,3 +127,28 @@ def test_l1_initialization_with_ionex_when_available():
     cfg = {**BASE_CONFIG, "ionex_file": str(IONEX_PATH)}
     layer = L1MacroLayer(cfg, origin_lat=39.9042, origin_lon=116.4074)
     assert layer.ionex is not None
+
+
+def test_l1_compute_components_exposes_offaxis_matrix():
+    layer = L1MacroLayer(BASE_CONFIG, origin_lat=34.3416, origin_lon=108.9398)
+    comp = layer.compute_components(timestamp=_ts())
+
+    assert "offaxis_theta_deg" in comp
+    assert comp["offaxis_theta_deg"].shape == (256, 256)
+    center = comp["offaxis_theta_deg"][128, 128]
+    corner = comp["offaxis_theta_deg"][0, 0]
+    assert center <= corner
+
+
+def test_l1_visible_satellites_support_max_elevation_filter():
+    layer = L1MacroLayer(BASE_CONFIG, origin_lat=34.3416, origin_lon=108.9398)
+    visible = layer.get_visible_satellites(
+        origin_lat=34.3416,
+        origin_lon=108.9398,
+        timestamp=_ts(),
+        min_elevation_deg=5.0,
+        max_elevation_deg=20.0,
+        max_count=20,
+    )
+    assert visible
+    assert all(5.0 <= row["elevation_deg"] <= 20.0 for row in visible)

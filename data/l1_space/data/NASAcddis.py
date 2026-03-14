@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 # 配置参数
 YEAR = 2025
 BASE_URL = "https://cddis.nasa.gov/archive/gnss/products/ionex"
-SAVE_DIR = "./cddis_data_2025"
+SAVE_DIR = "./data/l1_space/data/cddis_data_2025"
 MAX_WORKERS = 4  # 网络不稳定时，建议降低并发数，4-5 比较稳妥
 
 if not os.path.exists(SAVE_DIR):

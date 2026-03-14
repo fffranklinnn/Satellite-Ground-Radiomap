@@ -128,7 +128,7 @@ Satellite-Ground-Radiomap/
 Practical optimization recommendations:
 
 1. Keep `src/` as the single runtime source of truth; avoid editing `branch_*` trees.
-2. Keep all heavy artifacts under `output/` and data downloads under `data/` or `cddis_data_2025/` (already gitignored).
+2. Keep all heavy artifacts under `output/` and data downloads under `data/` (use `data/l1_space/data/cddis_data_2025/` for yearly IONEX archives; already gitignored).
 3. For long-term cleanliness, archive or remove local `branch_*` snapshots once no longer needed.
 4. Prefer script-based reproducibility (`scripts/`) over ad-hoc notebook outputs.
 

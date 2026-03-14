@@ -191,3 +191,173 @@ python scripts/postprocess_xian_timeseries.py \
   frame_json/
     <prefix>_<frame_idx>_<timestamp>.json
 ```
+
+## 6. `generate_xian_city_radiomap.py` 数据集 prototype / pilot 输出
+
+当使用：
+
+```bash
+python scripts/generate_xian_city_radiomap.py   --config configs/mission_config.yaml   --timestamp 2025-01-01T06:00:00   --max-tiles 1   --target-sat-id 51863   --dataset-prototype-out output/datasets/sgmrm_v1/pilot
+```
+
+脚本会在常规 PNG/NPY 城市输出之外，额外写出一个 tile-level prototype 样本：
+
+```text
+output/datasets/sgmrm_v1/pilot/
+  manifest.jsonl
+  logs/
+  previews/
+    <sample_id>.png
+  samples/
+    <sample_id>.npz
+```
+
+当前 `.npz` 固定包含：
+
+- `composite`
+- `l1`
+- `l2`
+- `l3`
+- `height`
+- `occ`
+
+当前 `manifest.jsonl` 的推荐最小字段包括：
+
+- `sample_id`
+- `dataset_version`
+- `split`（当前为 `pilot`）
+- `sample_type`（当前为 `tile-level`）
+- `source_script`
+- `array_keys`
+- `grid_shape`
+- `tile_id`
+- `timestamp_utc`
+- `origin_lat` / `origin_lon`
+- `frequency_ghz`
+- `rain_rate_mm_h`
+- `satellite_norad_id`
+- `satellite_elevation_deg` / `satellite_azimuth_deg`
+- `ionex_used` / `era5_used`
+- `l2_padding_m`
+- `npz_path` / `preview_png_path`
+- `composite_mean` / `composite_std`
+
+### 当前 pilot 的用途
+
+这一路径适合做：
+
+1. 单样本 exporter 验证
+2. 小规模条件 sweep（rain / satellite / timestamp）
+3. 后续正式数据集生成前的 schema 打磨
+
+### 当前 pilot 约定
+
+- 先使用**单 tile、单时间、单卫星**收口导出格式
+- sweep 通过重复运行脚本累积到同一个 `manifest.jsonl`
+- 建议保持 `sample_id` 可直接读出主要条件轴（tile / ts / sat / freq / rain）
+
+## 7. SGMRM Dataset Spec v1（draft）
+
+当前 draft 采用 **tile-level sample** 作为最小样本单位，目标是先把导出格式、命名规则、manifest 索引和 pilot sweep 约定收口，再扩展到正式数据集生成。
+
+### 7.1 样本目录建议
+
+```text
+output/datasets/sgmrm_v1/
+  pilot/
+    manifest.jsonl
+    logs/
+    previews/
+    samples/
+  train/        # 预留
+  val/          # 预留
+  test/         # 预留
+```
+
+当前已落地的是 `pilot/`，后续正式 split 可以沿用同样的内部结构。
+
+### 7.2 `sample_id` 命名约定
+
+推荐保持：
+
+```text
+sgmrm_v1__tile-<tile_id>__ts-<timestamp>__sat-<norad>__f-<freq>__rain-<rain>
+```
+
+要求：
+- 能直接读出主要条件轴
+- 不依赖额外数据库即可做粗筛选
+- 同一条件重复运行时，优先保持 deterministic 命名
+
+### 7.3 `.npz` 约定
+
+当前固定数组键：
+
+- `composite`
+- `l1`
+- `l2`
+- `l3`
+- `height`
+- `occ`
+
+其中：
+- `composite` 是主监督/主分析对象
+- `l1/l2/l3` 保留可解释分量
+- `height/occ` 保留 L3 几何上下文
+
+### 7.4 `manifest.jsonl` 字段分层
+
+#### 必填（当前应稳定存在）
+- `sample_id`
+- `dataset_version`
+- `split`
+- `sample_type`
+- `source_script`
+- `array_keys`
+- `grid_shape`
+- `tile_id`
+- `timestamp_utc`
+- `origin_lat`
+- `origin_lon`
+- `frequency_ghz`
+- `rain_rate_mm_h`
+- `satellite_norad_id`
+- `satellite_elevation_deg`
+- `satellite_azimuth_deg`
+- `ionex_used`
+- `era5_used`
+- `l2_padding_m`
+- `npz_path`
+- `preview_png_path`
+
+#### 统计型推荐字段
+- `composite_mean`
+- `composite_std`
+
+#### 后续可扩展字段（暂不强制）
+- `condition_axes`
+- `condition_group_id`
+- `scenario_id`
+- `split_reason`
+- `tags`
+- `notes`
+
+### 7.5 Pilot sweep 约定
+
+当前 pilot 已经验证三类最小条件轴：
+
+1. `rain_rate_mm_h`
+2. `satellite_norad_id`
+3. `timestamp_utc`
+
+推荐将 pilot 用作：
+- exporter 正确性验证
+- schema 打磨
+- 条件轴设计验证
+- 正式 train/val/test 生成前的 smoke test
+
+### 7.6 当前边界
+
+- 目前仍以 **单 tile 小样本** 为主，不代表正式大规模数据集已完成。
+- `pilot/manifest.jsonl` 当前适合做 schema 验证，不宜直接当作最终训练索引。
+- 后续如果扩展到多 tile / 多城市 / 多卫星 / 多时间，需要优先保证 `sample_id` 和 manifest 规则继续一致。

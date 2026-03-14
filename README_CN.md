@@ -128,7 +128,7 @@ Satellite-Ground-Radiomap/
 建议：
 
 1. `src/` 作为唯一运行时真源，`branch_*` 仅做历史参考。
-2. 大体量结果统一放 `output/`，原始下载放 `data/` 或 `cddis_data_2025/`。
+2. 大体量结果统一放 `output/`，原始下载统一放 `data/`（全年 IONEX 建议放 `data/l1_space/data/cddis_data_2025/`，已 gitignore）。
 3. 长期维护时可把 `branch_*` 归档或移出主目录，减少结构噪声。
 4. 优先通过 `scripts/` 复现实验，避免不可追踪的临时流程。
 

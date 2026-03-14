@@ -9,6 +9,8 @@ This module provides fundamental RF propagation formulas including:
 - Phased array antenna gain (merged from branch_L1)
 """
 
+from typing import Optional
+
 import numpy as np
 
 # ── Physical constants (merged from branch_L1) ────────────────────────────────
@@ -385,6 +387,35 @@ def gaussian_beam_gain_db(theta_az_deg: np.ndarray,
         (theta_az_deg / hpbw_az_deg) ** 2 +
         (theta_el_deg / hpbw_el_deg) ** 2
     )
+
+
+def parabolic_rolloff_gain_db(theta_deg: np.ndarray,
+                              peak_gain_db: float,
+                              theta_3db_deg: float,
+                              min_gain_db: Optional[float] = None) -> np.ndarray:
+    """
+    Axisymmetric antenna roll-off model.
+
+    G(θ) = G_peak - 3·(θ / θ_3dB)^2  (dB)
+
+    This form is convenient for satellite beam-footprint rendering because it
+    produces smooth off-axis contours and preserves the 3 dB point explicitly.
+
+    Args:
+        theta_deg:     Off-axis angle from boresight in degrees (ndarray)
+        peak_gain_db:  Peak boresight gain in dBi
+        theta_3db_deg: Off-axis 3 dB angle in degrees
+        min_gain_db:   Optional gain floor (dBi)
+
+    Returns:
+        Antenna gain array in dBi (same shape as theta_deg)
+    """
+    theta = np.maximum(np.asarray(theta_deg, dtype=float), 0.0)
+    theta_3db = max(float(theta_3db_deg), 1e-6)
+    gain = float(peak_gain_db) - 3.0 * (theta / theta_3db) ** 2
+    if min_gain_db is not None:
+        gain = np.maximum(gain, float(min_gain_db))
+    return gain
 
 
 def phased_array_peak_gain_db(n_elements: int,

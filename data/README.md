@@ -114,8 +114,42 @@ IONEX 批量下载：
 python data/l1_space/data/NASAcddis.py
 ```
 
-## 6. 相关文档
+## 6. `output/datasets/sgmrm_v1/` 目录约定（draft）
+
+除原始输入数据外，当前项目已经开始在 `output/datasets/sgmrm_v1/` 下整理 tile-level prototype / pilot 样本。
+
+推荐结构：
+
+```text
+output/datasets/sgmrm_v1/
+  pilot/
+    manifest.jsonl
+    logs/
+    previews/
+    samples/
+  train/
+  val/
+  test/
+```
+
+说明：
+- `pilot/`：用于 exporter、schema 和条件轴验证
+- `train/val/test/`：预留给后续正式数据集切分
+- 当前 arrays 以 `.npz` 为主，预览图以 `.png` 为辅，索引使用 `manifest.jsonl`
+
+当前 pilot 已验证的小规模条件轴包括：
+- rain sweep
+- satellite sweep
+- timestamp sweep
+
+正式数据集生成前，建议先保证：
+1. `sample_id` 命名规则稳定
+2. `manifest.jsonl` 字段一致
+3. 数组键集合不随脚本运行随机漂移
+
+## 7. 相关文档
 
 - L1 数据细节：[l1_space/README.md](l1_space/README.md)
 - L2 DEM 细节：[l2_topo/README.md](l2_topo/README.md)
 - L3 建筑数据与 cache：[l3_urban/README.md](l3_urban/README.md)
+- 脚本与 dataset prototype 说明：[../scripts/README.md](../scripts/README.md)

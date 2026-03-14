@@ -9,7 +9,8 @@ from src.core.physics import (
     polarization_loss,
     db_to_linear,
     linear_to_db,
-    combine_losses_db
+    combine_losses_db,
+    parabolic_rolloff_gain_db,
 )
 
 
@@ -98,3 +99,15 @@ def test_combine_losses_db():
 
     total = combine_losses_db(loss1, loss2, loss3)
     assert total == 35.0
+
+
+def test_parabolic_rolloff_gain_db():
+    """Parabolic roll-off should preserve boresight and decay off-axis."""
+    theta = np.array([0.0, 5.0, 10.0], dtype=np.float32)
+    gain = parabolic_rolloff_gain_db(theta, peak_gain_db=30.0, theta_3db_deg=10.0, min_gain_db=5.0)
+
+    assert gain.shape == theta.shape
+    assert gain[0] == pytest.approx(30.0)
+    assert gain[1] < gain[0]
+    assert gain[2] == pytest.approx(27.0)
+    assert np.all(gain >= 5.0)

@@ -45,7 +45,7 @@ R_E           = 6371.0 # km
 MIN_ELEV_DEG  = 5.0    # minimum elevation angle for a satellite to be "visible"
 
 TLE_FILE   = 'data/2025_0101.tle'
-IONEX_FILE = 'data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz'
+IONEX_FILE = 'data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz'
 OUT        = Path('output/global_map')
 
 # ── Geometry ──────────────────────────────────────────────────────────────────

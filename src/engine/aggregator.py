@@ -81,16 +81,21 @@ class RadioMapAggregator:
         x_in = np.linspace(0, layer_coverage_km, input_size)
         y_in = np.linspace(0, layer_coverage_km, input_size)
 
+        # Linear spline keeps interpolation behavior explicit and stable for
+        # loss maps (no high-order overshoot near steep gradients).
         interpolator = RectBivariateSpline(x_in, y_in, layer_output, kx=1, ky=1)
 
         target_coverage_km = 0.256   # L3 tile coverage
 
         if layer_coverage_km > target_coverage_km:
+            # L1/L2 are large-footprint maps. We extract only the center area
+            # that corresponds to the L3 tile footprint around origin.
             center = layer_coverage_km / 2.0
             half   = target_coverage_km / 2.0
             x_out  = np.linspace(center - half, center + half, self.target_grid_size)
             y_out  = np.linspace(center - half, center + half, self.target_grid_size)
         else:
+            # For equal/smaller coverage, just resample the full extent.
             x_out = np.linspace(0, layer_coverage_km, self.target_grid_size)
             y_out = np.linspace(0, layer_coverage_km, self.target_grid_size)
 
@@ -116,6 +121,8 @@ class RadioMapAggregator:
             Dict with keys 'l1', 'l2', 'l3', 'composite' (whichever are enabled).
         """
         contributions = {}
+        # Accumulate in float64 to reduce summation drift when stacking
+        # multiple interpolated layers in dB domain.
         composite = np.zeros((self.target_grid_size, self.target_grid_size), dtype=np.float64)
 
         if self.l1_layer is not None:

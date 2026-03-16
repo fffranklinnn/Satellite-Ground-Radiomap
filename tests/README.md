@@ -1,6 +1,6 @@
 # tests 说明
 
-本目录是 SG-MRM 的单元测试集合，覆盖核心公式、加载器、聚合器和 L1 主路径。
+本目录是 SG-MRM 的测试入口，覆盖核心公式、加载器、聚合器和 L1 主路径。
 
 ## 1. 运行方式
 
@@ -15,12 +15,15 @@ pytest --cov=src tests/
 pytest tests/test_core/
 pytest tests/test_layers/test_l1_macro.py
 pytest tests/test_engine/test_aggregator.py
+pytest tests/test_multisat_interference.py
 ```
 
 ## 2. 目录结构
 
 ```text
 tests/
+├── test_multisat_interference.py
+│   # L1 多星干扰 / SINR 相关测试
 ├── test_core/
 │   ├── test_grid.py
 │   └── test_physics.py
@@ -50,10 +53,13 @@ tests/
   - ERA5 IWV 读取与插值
 - `test_data_validation.py`
   - 配置数据完整性检查（缺失关键数据、全层关闭场景）
+- `test_multisat_interference.py`
+  - 多星干扰开启后的 SINR 范围、边界行为与一致性检查
 
 ## 4. 当前测试规模
 
-- `pytest --collect-only -q`：当前分支（2026-03-07）收集到 37 个测试用例。
+- 建议使用 `pytest --collect-only -q` 实时查看当前分支测试数。
+- 避免在文档中写死用例数量，减少后续漂移。
 
 ## 5. 建议补充
 

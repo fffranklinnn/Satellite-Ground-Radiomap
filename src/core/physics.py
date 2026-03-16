@@ -92,11 +92,13 @@ def rain_specific_attenuation_db_per_km(frequency_ghz,
     rain = np.asarray(rain_rate_mm_h, dtype=float)
     el = np.asarray(elevation_angle_deg, dtype=float)
 
+    # Interpolate ITU-style horizontal/vertical coefficients to target freq.
     k_h, a_h, k_v, a_v = _rain_coefficients(freq)
 
     cos_el_sq = np.cos(np.radians(np.clip(el, 0.0, 90.0))) ** 2
     cos_2tau = np.cos(2.0 * np.radians(float(polarization_tilt_deg)))
 
+    # Blend H/V polarization components to equivalent link polarization.
     k = 0.5 * (k_h + k_v + (k_h - k_v) * cos_el_sq * cos_2tau)
     k = np.maximum(k, 1e-10)
 
@@ -130,6 +132,7 @@ def rain_attenuation_slant_path_db(elevation_angle_deg,
     el_safe = np.clip(el, 0.1, 90.0)
     sin_el = np.sin(np.radians(el_safe))
 
+    # Effective rain layer depth above station.
     rain_layer_km = max(float(rain_height_km) - float(station_alt_km), 0.1)
     slant_len_km = rain_layer_km / sin_el
 
@@ -142,6 +145,7 @@ def rain_attenuation_slant_path_db(elevation_angle_deg,
 
     freq_safe = np.maximum(freq, 1e-3)
     term = np.maximum(slant_len_km * gamma_r / freq_safe, 0.0)
+    # Empirical reduction factor approximates inhomogeneous rain cell effects.
     reduction = 1.0 / (
         1.0 +
         0.78 * np.sqrt(term) -
@@ -178,6 +182,7 @@ def atmospheric_loss(elevation_angle_deg, frequency_ghz, rain_rate_mm_h=0.0):
     path_factor = 1.0 / np.sin(np.radians(el_safe))
 
     # Baseline gaseous attenuation (clear-sky), frequency dependent.
+    # This is an engineering approximation, not a full line-by-line model.
     dry_zenith = 0.035 * (freq / 10.0)
     wet_zenith = 0.012 * (freq / 10.0)
     atm_loss = (dry_zenith + wet_zenith) * path_factor
@@ -222,7 +227,7 @@ def atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2, rain_ra
     el_safe = np.clip(el, 5.0, 90.0)
     sin_el = np.sin(np.radians(el_safe))
 
-    # Scale dry/wet zenith with frequency (relative to 10 GHz reference)
+    # Convert ERA5 IWV to wet-zenith attenuation and scale to operating freq.
     freq_scale = (freq / 10.0)
     dry_zenith = 0.046 * freq_scale
     wet_zenith = 0.0173 * iwv * freq_scale

@@ -6,11 +6,12 @@
 
 ```text
 data/
-├── 2025_0101.tle
+├── 2025_0101.tle -> starlink-2025-tle/2025-01-01.tle
 ├── l1_space/
 │   └── data/
 ├── l2_topo/
-└── l3_urban/
+├── l3_urban/
+└── starlink-2025-tle/
 ```
 
 ## 2. 按层的数据依赖
@@ -36,7 +37,7 @@ data/
 
 ### L2（地形层）
 
-- `data/l2_topo/全国DEM数据.tif`
+- `data/l2_topo/china_dem_30m.tif`
 
 说明：L2 通过窗口读取，不会一次性把全国 DEM 全部加载到内存。
 
@@ -156,6 +157,9 @@ output/datasets/sgmrm_v1/
 ## 7. 相关文档
 
 - L1 数据细节：[l1_space/README.md](l1_space/README.md)
+- L1 数据工作区细节：[l1_space/data/README.md](l1_space/data/README.md)
 - L2 DEM 细节：[l2_topo/README.md](l2_topo/README.md)
 - L3 建筑数据与 cache：[l3_urban/README.md](l3_urban/README.md)
+- 西安 L3 细分目录：[l3_urban/xian/README.md](l3_urban/xian/README.md)
+- 陕西省原始矢量目录：[l3_urban/shanxisheng/README.md](l3_urban/shanxisheng/README.md)
 - 脚本与 dataset prototype 说明：[../scripts/README.md](../scripts/README.md)

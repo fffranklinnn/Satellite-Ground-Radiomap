@@ -106,7 +106,7 @@ python scripts/check_data_integrity.py --config configs/mission_config.yaml --st
 | TLE | `data/2025_0101.tle` | 2025-01-01 主仿真轨道数据 |
 | IONEX | `data/l1_space/data/*.INX.gz` | 电离层 TEC |
 | ERA5 pressure-level | `data/l1_space/data/*.nc` | IWV 提取（`q` 积分） |
-| DEM | `data/l2_topo/全国DEM数据.tif` | L2 地形遮挡 |
+| DEM | `data/l2_topo/china_dem_30m.tif` | L2 地形遮挡 |
 | L3 原始数据 | `data/l3_urban/shanxisheng/陕西省/*.shp` | 陕西省建筑矢量源 |
 | L3 可运行缓存 | `data/l3_urban/xian/tiles_60/` | 西安现成 cache |
 
@@ -122,14 +122,14 @@ Satellite-Ground-Radiomap/
 ├── tests/           # 单元测试
 ├── examples/        # 旧示例
 ├── output/          # 生成结果（已 gitignore）
-└── branch_L1/L2/L3/ # 本地历史分支快照（已 gitignore）
+└── change/          # 本地历史快照目录（非运行时）
 ```
 
 建议：
 
-1. `src/` 作为唯一运行时真源，`branch_*` 仅做历史参考。
+1. `src/` 作为唯一运行时真源，历史快照目录仅做参考。
 2. 大体量结果统一放 `output/`，原始下载统一放 `data/`（全年 IONEX 建议放 `data/l1_space/data/cddis_data_2025/`，已 gitignore）。
-3. 长期维护时可把 `branch_*` 归档或移出主目录，减少结构噪声。
+3. 长期维护时可把历史快照归档或移出主目录，减少结构噪声。
 4. 优先通过 `scripts/` 复现实验，避免不可追踪的临时流程。
 
 ## 7. 文档索引
@@ -138,6 +138,7 @@ Satellite-Ground-Radiomap/
 - 快速上手：[docs/QUICKSTART.md](docs/QUICKSTART.md)
 - 配置说明：[configs/README.md](configs/README.md)
 - 数据说明：[data/README.md](data/README.md)
+- 源码结构：[src/README.md](src/README.md)
 - 三层实现：[src/layers/README.md](src/layers/README.md)
 - L3 工具链：[tools/README.md](tools/README.md)
 - 工具模块：[src/utils/README.md](src/utils/README.md)

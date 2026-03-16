@@ -76,7 +76,7 @@ layers:
     grid_size: 256
     coverage_km: 25.6
     resolution_m: 100.0
-    dem_file: "data/l2_topo/全国DEM数据.tif"
+    dem_file: "data/l2_topo/china_dem_30m.tif"
     frequency_ghz: 14.5         # Match L1 Ku-band frequency
     satellite_elevation_deg: 45.0
     satellite_azimuth_deg: 180.0

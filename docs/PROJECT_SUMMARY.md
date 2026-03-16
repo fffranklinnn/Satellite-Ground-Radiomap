@@ -20,7 +20,7 @@
 | IONEX | `data/l1_space/data/*.INX.gz` | 可用 |
 | ERA5 pressure-level | `data/l1_space/data/*.nc` | 可用 |
 | ERA5 single-level 脚本 | `data/l1_space/data/cds_single_level.py` | 可用（脚本） |
-| DEM | `data/l2_topo/全国DEM数据.tif` | 可用 |
+| DEM | `data/l2_topo/china_dem_30m.tif` | 可用 |
 | L3 原始 shp | `data/l3_urban/shanxisheng/陕西省/*.shp` | 可用 |
 | L3 可运行 cache | `data/l3_urban/xian/tiles_60/` | 可用（西安） |
 

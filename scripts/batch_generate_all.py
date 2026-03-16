@@ -65,7 +65,7 @@ MULTIDAY_DOYS = list(range(1, 20))  # DOY 001-019
 TLE_FILE   = "data/2025_0101.tle"
 ERA5_FILE  = "data/l1_space/data/data_stream-oper_stepType-instant.nc"
 IONEX_FILE = "data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
-DEM_FILE   = "data/l2_topo/全国DEM数据.tif"
+DEM_FILE   = "data/l2_topo/china_dem_30m.tif"
 TILE_CACHE = "data/l3_urban/xian/tiles_60"
 
 OUTPUT_ROOT = PROJECT_ROOT / "output" / "batch"

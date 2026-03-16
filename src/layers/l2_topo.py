@@ -44,7 +44,7 @@ class L2TopoLayer(BaseLayer):
     GRID_SIZE           = 256
     RESOLUTION_M        = 100.0
     COVERAGE_M          = GRID_SIZE * RESOLUTION_M   # 25,600 m = 25.6 km
-    DEM_LAT_MIN, DEM_LAT_MAX = 15.0, 57.0   # National DEM coverage (全国DEM数据.tif)
+    DEM_LAT_MIN, DEM_LAT_MAX = 15.0, 57.0   # National DEM coverage (china_dem_30m.tif)
     DEM_LON_MIN, DEM_LON_MAX = 73.0, 139.0  # National DEM coverage
     DIFFRACTION_LOSS_DB = 20.0
     MAX_DIFFRACTION_LOSS_DB = 60.0

@@ -32,6 +32,8 @@ import yaml
 from skyfield.api import load, EarthSatellite, wgs84
 
 from .base import BaseLayer, LayerContext
+from ..context.frame_context import FrameContext
+from ..context.layer_states import EntryWaveState
 from ..core.grid import (
     get_grid_latlon,
     get_azimuth_elevation,
@@ -728,3 +730,52 @@ class L1MacroLayer(BaseLayer):
 
     def _load_antenna_pattern_csv(self, pattern_file: str):
         return None
+
+    # ------------------------------------------------------------------
+    # FrameContext-based interface (task9 / AC-3, AC-4)
+    # ------------------------------------------------------------------
+
+    def propagate_entry(self,
+                        frame: FrameContext,
+                        context: Optional[LayerContext] = None,
+                        **kwargs) -> EntryWaveState:
+        """
+        Compute L1 entry-wave propagation for a FrameContext frame.
+
+        Returns an EntryWaveState carrying all component maps and satellite
+        geometry. The frame_id is propagated into the state for downstream
+        consistency checks.
+
+        Args:
+            frame:   FrameContext for this simulation frame.
+            context: Optional LayerContext for extra parameters.
+
+        Returns:
+            EntryWaveState with frame_id == frame.frame_id.
+        """
+        components = self.compute_components(
+            origin_lat=frame.grid.center_lat,
+            origin_lon=frame.grid.center_lon,
+            timestamp=frame.timestamp,
+            context=context,
+            **kwargs,
+        )
+        sat = components.get("satellite", {})
+        return EntryWaveState(
+            frame_id=frame.frame_id,
+            grid=frame.grid,
+            total_loss_db=components["total"],
+            fspl_db=components["fspl"],
+            atm_db=components["atm"],
+            iono_db=components["iono"],
+            pol_db=components["pol"],
+            gain_db=components["gain"],
+            elevation_deg=components["elevation"],
+            azimuth_deg=components["azimuth"],
+            slant_range_m=components["slant_range_m"],
+            occlusion_mask=components["occlusion_mask"],
+            norad_id=str(sat.get("norad_id", "")) or None,
+            sat_lat_deg=sat.get("lat_deg"),
+            sat_lon_deg=sat.get("lon_deg"),
+            sat_alt_m=sat.get("alt_m"),
+        )

@@ -13,7 +13,8 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import warnings
 import yaml
 import numpy as np
 
@@ -23,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
 from src.engine import RadioMapAggregator
 from src.layers.base import LayerContext
+from src.context import GridSpec, CoverageSpec, FrameBuilder
+from src.context.time_utils import require_utc
 from src.utils import setup_logger, SimulationLogger, plot_radio_map, plot_layer_comparison
 from src.utils import get_profiler
 from src.utils.data_validation import (
@@ -81,6 +84,33 @@ def initialize_layers(config: dict):
         print(f"Initialized L3 Urban Layer: {l3_layer}")
 
     return l1_layer, l2_layer, l3_layer
+
+
+def build_frame_builder(config: dict) -> FrameBuilder:
+    """
+    Build a FrameBuilder from config.
+
+    Constructs a GridSpec from the L1 coverage and origin, and a CoverageSpec
+    from the product coverage. This replaces the legacy bare origin_lat/lon
+    passing pattern.
+    """
+    origin_lat = config['origin']['latitude']
+    origin_lon = config['origin']['longitude']
+
+    l1_cfg = config['layers'].get('l1_macro', {})
+    coarse_km = float(l1_cfg.get('coverage_km', 256.0))
+    grid_size = int(l1_cfg.get('grid_size', 256))
+
+    grid = GridSpec.from_legacy_args(origin_lat, origin_lon, coarse_km, grid_size, grid_size)
+
+    product_km = float(config.get('product', {}).get('coverage_km', 0.256))
+    product_nx = int(config.get('product', {}).get('grid_size', 256))
+    coverage = CoverageSpec.from_config(
+        origin_lat=origin_lat, origin_lon=origin_lon,
+        coarse_coverage_km=coarse_km, coarse_nx=grid_size, coarse_ny=grid_size,
+        product_coverage_km=product_km, product_nx=product_nx, product_ny=product_nx,
+    )
+    return FrameBuilder(grid=grid, coverage=coverage)
 
 
 def run_simulation(config: dict, output_dir: Path):

@@ -28,6 +28,8 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from .base import BaseLayer, LayerContext
+from ..context.frame_context import FrameContext
+from ..context.layer_states import EntryWaveState, UrbanRefinementState
 
 
 # ── Incident direction helpers (from branch_L3) ───────────────────────────────
@@ -315,3 +317,60 @@ class L3UrbanLayer(BaseLayer):
             loss_db[occ_mask] = np.maximum(loss_db[occ_mask], self.occ_loss_db)
 
         return loss_db
+
+    # ------------------------------------------------------------------
+    # FrameContext-based interface (task11 / AC-3, AC-4)
+    # ------------------------------------------------------------------
+
+    def refine_urban(self,
+                     frame: FrameContext,
+                     entry: Optional[EntryWaveState] = None,
+                     context: Optional[LayerContext] = None,
+                     **kwargs) -> UrbanRefinementState:
+        """
+        Compute L3 urban NLoS residual for a FrameContext frame.
+
+        The incident direction is derived from the entry state's center-pixel
+        azimuth/elevation if not provided in context.
+
+        Args:
+            frame:   FrameContext for this simulation frame.
+            entry:   EntryWaveState from L1 (used for incident direction).
+            context: Optional LayerContext; incident_dir overrides entry geometry.
+
+        Returns:
+            UrbanRefinementState with frame_id == frame.frame_id.
+        """
+        if frame.grid is None:
+            raise ValueError("refine_urban requires frame.grid to be set.")
+
+        # Derive incident_dir from entry state if not in context
+        ctx = LayerContext.from_any(context).merged_with_kwargs(kwargs)
+        if ctx.incident_dir is None and entry is not None:
+            cy, cx = entry.grid.ny // 2, entry.grid.nx // 2
+            az_deg = float(entry.azimuth_deg[cy, cx])
+            el_deg = float(entry.elevation_deg[cy, cx])
+            ctx = LayerContext(
+                incident_dir={"az_deg": az_deg, "el_deg": el_deg},
+                extras=dict(ctx.extras),
+            )
+
+        loss_db = self.compute(
+            origin_lat=frame.grid.center_lat,
+            origin_lon=frame.grid.center_lon,
+            timestamp=frame.timestamp,
+            context=ctx,
+        )
+
+        nlos_mask = loss_db > 0
+        # support_mask: True where tile data was available (non-zero loss or tile loaded)
+        support_mask = np.ones(loss_db.shape, dtype=bool)
+
+        return UrbanRefinementState(
+            frame_id=frame.frame_id,
+            grid=frame.grid,
+            urban_grid=frame.grid,
+            urban_residual_db=loss_db,
+            support_mask=support_mask,
+            nlos_mask=nlos_mask,
+        )

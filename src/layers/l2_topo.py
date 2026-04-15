@@ -27,6 +27,8 @@ from typing import Any, Dict, Optional, Union
 import numpy as np
 
 from .base import BaseLayer, LayerContext
+from ..context.frame_context import FrameContext
+from ..context.layer_states import EntryWaveState, TerrainState
 from ..core.physics import SPEED_OF_LIGHT
 
 
@@ -348,3 +350,78 @@ class L2TopoLayer(BaseLayer):
                 f"({self.DEM_LAT_MIN}~{self.DEM_LAT_MAX}N, "
                 f"{self.DEM_LON_MIN}~{self.DEM_LON_MAX}E)."
             )
+
+    # ------------------------------------------------------------------
+    # FrameContext-based interface (task10 / AC-3, AC-4)
+    # ------------------------------------------------------------------
+
+    def propagate_terrain(self,
+                          frame: FrameContext,
+                          entry: Optional[EntryWaveState] = None,
+                          context: Optional[LayerContext] = None,
+                          **kwargs) -> TerrainState:
+        """
+        Compute L2 terrain propagation for a FrameContext frame.
+
+        The L2 layer uses the SW corner of frame.grid as its origin
+        (L2 legacy convention). The GridSpec.sw_corner() method provides
+        the correct SW corner from the center-anchored grid.
+
+        Args:
+            frame:   FrameContext for this simulation frame.
+            entry:   EntryWaveState from L1 (used for sat geometry if available).
+            context: Optional LayerContext for extra parameters.
+
+        Returns:
+            TerrainState with frame_id == frame.frame_id.
+        """
+        if frame.grid is None:
+            raise ValueError("propagate_terrain requires frame.grid to be set.")
+
+        # Resolve satellite geometry: prefer frame, fall back to entry, then layer defaults
+        sat_elevation_deg = frame.sat_elevation_deg
+        sat_azimuth_deg = frame.sat_azimuth_deg
+        if sat_elevation_deg is None and entry is not None:
+            # Use center-pixel elevation from entry state as representative value
+            cy, cx = entry.grid.ny // 2, entry.grid.nx // 2
+            sat_elevation_deg = float(entry.elevation_deg[cy, cx])
+        if sat_azimuth_deg is None and entry is not None:
+            cy, cx = entry.grid.ny // 2, entry.grid.nx // 2
+            sat_azimuth_deg = float(entry.azimuth_deg[cy, cx])
+
+        # Build context with satellite geometry
+        ctx_extras = {}
+        if sat_elevation_deg is not None:
+            ctx_extras["satellite_elevation_deg"] = sat_elevation_deg
+        if sat_azimuth_deg is not None:
+            ctx_extras["satellite_azimuth_deg"] = sat_azimuth_deg
+        if frame.sat_alt_m is not None:
+            ctx_extras["satellite_altitude_km"] = frame.sat_alt_m / 1000.0
+        if frame.sat_slant_range_m is not None:
+            ctx_extras["satellite_slant_range_km"] = frame.sat_slant_range_m / 1000.0
+
+        if context is not None:
+            merged = LayerContext.from_any(context).merged_with_kwargs(ctx_extras)
+        else:
+            merged = LayerContext(extras=ctx_extras)
+
+        # L2 uses SW corner as origin (legacy convention)
+        sw_lat, sw_lon = frame.grid.sw_corner()
+
+        loss_db = self.compute(
+            origin_lat=sw_lat,
+            origin_lon=sw_lon,
+            timestamp=frame.timestamp,
+            context=merged,
+            **kwargs,
+        )
+
+        # Reconstruct occlusion mask: pixels at max diffraction loss are occluded
+        occlusion_mask = loss_db >= self.MAX_DIFFRACTION_LOSS_DB
+
+        return TerrainState(
+            frame_id=frame.frame_id,
+            grid=frame.grid,
+            loss_db=loss_db,
+            occlusion_mask=occlusion_mask,
+        )

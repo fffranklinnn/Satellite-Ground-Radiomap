@@ -30,9 +30,10 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.engine import RadioMapAggregator
 from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
 from src.layers.base import LayerContext
+from src.context import GridSpec, CoverageSpec, FrameBuilder
+from src.context.time_utils import parse_iso_utc  # shared strict UTC helper
 from src.utils import plot_radio_map
 
 
@@ -97,14 +98,20 @@ def resolve_path(project_root: Path, value: Optional[str]) -> Optional[Path]:
     return project_root / p
 
 
-def parse_iso_utc(ts_text: str) -> datetime:
-    raw = ts_text.strip()
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
-    dt = datetime.fromisoformat(raw)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+def build_frame_builder_for_script(config: dict, origin_lat: float, origin_lon: float) -> FrameBuilder:
+    """Build a FrameBuilder from config and resolved origin coordinates."""
+    l1_cfg = config.get("layers", {}).get("l1_macro", {})
+    coarse_km = float(l1_cfg.get("coverage_km", 256.0))
+    grid_size = int(l1_cfg.get("grid_size", 256))
+    grid = GridSpec.from_legacy_args(origin_lat, origin_lon, coarse_km, grid_size, grid_size)
+    product_km = float(config.get("product", {}).get("coverage_km", 0.256))
+    product_nx = int(config.get("product", {}).get("grid_size", 256))
+    coverage = CoverageSpec.from_config(
+        origin_lat=origin_lat, origin_lon=origin_lon,
+        coarse_coverage_km=coarse_km, coarse_nx=grid_size, coarse_ny=grid_size,
+        product_coverage_km=product_km, product_nx=product_nx, product_ny=product_nx,
+    )
+    return FrameBuilder(grid=grid, coverage=coverage)
 
 
 def build_time_grid(start: datetime,
@@ -206,39 +213,48 @@ def compute_satellite_maps(
     l1_layer: L1MacroLayer,
     l2_layer: L2TopoLayer,
     l3_layer: L3UrbanLayer,
-    agg: RadioMapAggregator,
+    frame_builder: FrameBuilder,
     timestamp: datetime,
-    origin_lat: float,
-    origin_lon: float,
     norad_id: str,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
-    l1_comp = l1_layer.compute_components(
-        timestamp=timestamp,
-        origin_lat=origin_lat,
-        origin_lon=origin_lon,
-        target_norad_ids=[norad_id],
+    """
+    Compute per-satellite maps using the FrameContext pipeline.
+
+    Replaces the legacy LayerContext.extras geometry injection and
+    direct _interpolate_to_target() calls.
+    """
+    # Build a frame for this satellite; L1 will select the satellite internally
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        frame = frame_builder.build(timestamp)
+
+    # L1: propagate_entry selects the best satellite matching norad_id
+    entry = l1_layer.propagate_entry(
+        frame,
+        context=LayerContext(extras={"target_norad_ids": [norad_id]}),
     )
-    sat = l1_comp["satellite"]
+    sat = {
+        "norad_id": entry.norad_id or norad_id,
+        "lat_deg": entry.sat_lat_deg,
+        "lon_deg": entry.sat_lon_deg,
+        "alt_m": entry.sat_alt_m,
+        "azimuth_deg": float(entry.azimuth_deg[entry.grid.ny // 2, entry.grid.nx // 2]),
+        "elevation_deg": float(entry.elevation_deg[entry.grid.ny // 2, entry.grid.nx // 2]),
+        "slant_range_km": float(entry.slant_range_m[entry.grid.ny // 2, entry.grid.nx // 2]) / 1000.0,
+    }
 
-    context = LayerContext.from_any({
-        "incident_dir": {
-            "az_deg": sat["azimuth_deg"],
-            "el_deg": sat["elevation_deg"],
-        },
-        "satellite_azimuth_deg": sat["azimuth_deg"],
-        "satellite_elevation_deg": sat["elevation_deg"],
-        "satellite_slant_range_km": sat.get("slant_range_km"),
-        "satellite_altitude_km": sat.get("alt_m", 0.0) / 1000.0,
-        "target_norad_ids": [norad_id],
-    })
+    # L2: propagate_terrain uses frame.grid.sw_corner() — no manual extras injection
+    terrain = l2_layer.propagate_terrain(frame, entry=entry)
 
-    l2_map = l2_layer.compute(origin_lat=origin_lat, origin_lon=origin_lon, timestamp=timestamp, context=context)
-    l3_map = l3_layer.compute(origin_lat=origin_lat, origin_lon=origin_lon, timestamp=timestamp, context=context)
-    l1_interp = agg._interpolate_to_target(l1_comp["total"], l1_layer.coverage_km).astype(np.float32)
-    l2_interp = agg._interpolate_to_target(l2_map, l2_layer.coverage_km).astype(np.float32)
-    l3_final = np.asarray(l3_map, dtype=np.float32)
-    total_map = (l1_interp + l2_interp + l3_final).astype(np.float32)
-    return l1_interp, l2_interp, l3_final, total_map, sat
+    # L3: refine_urban derives incident_dir from entry state
+    urban = l3_layer.refine_urban(frame, entry=entry)
+
+    l1_map = entry.total_loss_db
+    l2_map = terrain.loss_db
+    l3_map = urban.urban_residual_db
+    total_map = (l1_map + l2_map + l3_map).astype(np.float32)
+    return l1_map, l2_map, l3_map, total_map, sat
 
 
 def satellite_metadata(sat_info: Dict[str, Any],
@@ -331,7 +347,7 @@ def main() -> None:
     l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
     l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon)
     l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon)
-    agg = RadioMapAggregator(l1_layer=l1_layer, l2_layer=l2_layer, l3_layer=l3_layer)
+    frame_builder = build_frame_builder_for_script(config, origin_lat, origin_lon)
 
     if target_norad_ids:
         l1_layer.target_norad_ids = target_norad_ids
@@ -400,7 +416,7 @@ def main() -> None:
                 sat_errors: List[Dict[str, Any]] = []
                 status = "ok"
 
-                target_size = agg.target_grid_size
+                target_size = frame_builder.grid.nx
                 default_l1 = np.full((target_size, target_size), l1_layer.NO_COVERAGE_LOSS_DB, dtype=np.float32)
                 l1_fused = default_l1.copy()
                 l2_fused = np.zeros((target_size, target_size), dtype=np.float32)
@@ -440,10 +456,8 @@ def main() -> None:
                                 l1_layer=l1_layer,
                                 l2_layer=l2_layer,
                                 l3_layer=l3_layer,
-                                agg=agg,
+                                frame_builder=frame_builder,
                                 timestamp=ts,
-                                origin_lat=origin_lat,
-                                origin_lon=origin_lon,
                                 norad_id=norad_id,
                             )
                             sat_meta = satellite_metadata(sat_info, l1_layer=l1_layer, rank=sat_rank)

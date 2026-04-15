@@ -115,121 +115,117 @@ def build_frame_builder(config: dict) -> FrameBuilder:
 
 def run_simulation(config: dict, output_dir: Path):
     """
-    Run the main simulation loop.
+    Run the main simulation loop using the FrameBuilder pipeline.
 
-    Args:
-        config: Configuration dictionary
-        output_dir: Output directory path
+    Each frame is driven by:
+        FrameBuilder.build(ts) -> propagate_entry -> propagate_terrain -> refine_urban
+
+    All timestamps are parsed through parse_iso_utc() for strict UTC enforcement.
     """
-    # Setup logging
+    import logging as _logging
     log_level = config['logging']['level']
     log_file = config['logging'].get('log_file')
-    logger = setup_logger('sg_mrm', level=getattr(__import__('logging'), log_level), log_file=log_file)
+    logger = setup_logger('sg_mrm', level=getattr(_logging, log_level), log_file=log_file)
     sim_logger = SimulationLogger()
-
-    # Start simulation
     sim_logger.start_simulation(config)
 
     # Initialize layers
     l1_layer, l2_layer, l3_layer = initialize_layers(config)
 
-    # Initialize aggregator
-    aggregator = RadioMapAggregator(l1_layer, l2_layer, l3_layer)
-    logger.info("Initialized RadioMapAggregator")
+    # Build FrameBuilder (replaces bare origin_lat/lon + legacy aggregator)
+    frame_builder = build_frame_builder(config)
 
-    # Parse time parameters
-    start_time = datetime.fromisoformat(config['time']['start'])
-    end_time = datetime.fromisoformat(config['time']['end'])
+    # Parse time parameters through strict UTC helpers
+    strict = bool(config.get('data_validation', {}).get('strict', False))
+    from src.context.time_utils import parse_iso_utc
+    start_time = parse_iso_utc(config['time']['start'], strict=strict)
+    end_time   = parse_iso_utc(config['time']['end'],   strict=strict)
     step_hours = config['time']['step_hours']
-    time_step = timedelta(hours=step_hours)
+    time_step  = timedelta(hours=step_hours)
 
-    # Origin coordinates
-    origin_lat = config['origin']['latitude']
-    origin_lon = config['origin']['longitude']
-
-    # Build LayerContext from config (incident_dir for L3)
-    l3_cfg = config['layers'].get('l3_urban', {})
-    incident_dir_cfg = l3_cfg.get('incident_dir')
-    context = LayerContext.from_any({'incident_dir': incident_dir_cfg}) if incident_dir_cfg else None
-
-    # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir}")
 
-    # Simulation loop
     current_time = start_time
-    frame_count = 0
+    frame_count  = 0
 
     while current_time <= end_time:
         logger.info(f"\n{'='*60}")
-        logger.info(f"Processing timestamp: {current_time}")
+        logger.info(f"Processing timestamp: {current_time.isoformat()}")
         logger.info(f"{'='*60}")
 
-        # Compute radio map (single computation path)
-        sim_logger.log_layer_start("Aggregator", current_time)
-        contributions = None
+        sim_logger.log_layer_start("FramePipeline", current_time)
+
+        # Build frame — sat_info populated by L1 internally during propagate_entry
+        frame = frame_builder.build(current_time)
+
+        # Typed state propagation
+        entry   = l1_layer.propagate_entry(frame)   if l1_layer  else None
+        terrain = l2_layer.propagate_terrain(frame, entry=entry) if l2_layer else None
+        urban   = l3_layer.refine_urban(frame, entry=entry)      if l3_layer else None
+
+        # Assemble composite map from typed states
+        composite_map = np.zeros((frame.grid.ny, frame.grid.nx), dtype=np.float32)
+        contributions = {}
+        if entry is not None:
+            contributions['l1'] = entry.total_loss_db
+            composite_map += entry.total_loss_db
+        if terrain is not None:
+            contributions['l2'] = terrain.loss_db
+            composite_map += terrain.loss_db
+        if urban is not None:
+            contributions['l3'] = urban.urban_residual_db
+            composite_map += urban.urban_residual_db
+        contributions['composite'] = composite_map
+
+        sim_logger.log_layer_end("FramePipeline")
+
+        # Save individual layers
         if config['output']['save_individual_layers']:
-            contributions = aggregator.get_layer_contributions(origin_lat, origin_lon, current_time, context)
-            composite_map = contributions['composite']
-        else:
-            composite_map = aggregator.aggregate(origin_lat, origin_lon, current_time, context)
-        sim_logger.log_layer_end("Aggregator")
-
-        # Get individual layer contributions
-        if config['output']['save_individual_layers']:
-            # Save individual layers
-            if l1_layer and 'l1' in contributions:
-                l1_file = output_dir / f"l1_macro_{frame_count:04d}.png"
-                plot_radio_map(contributions['l1'], title=f"L1 Macro - {current_time}",
-                             output_file=str(l1_file), dpi=config['output']['dpi'])
-
-            if l2_layer and 'l2' in contributions:
-                l2_file = output_dir / f"l2_topo_{frame_count:04d}.png"
-                plot_radio_map(contributions['l2'], title=f"L2 Terrain - {current_time}",
-                             output_file=str(l2_file), dpi=config['output']['dpi'])
-
-            if l3_layer and 'l3' in contributions:
-                l3_file = output_dir / f"l3_urban_{frame_count:04d}.png"
-                plot_radio_map(contributions['l3'], title=f"L3 Urban - {current_time}",
-                             output_file=str(l3_file), dpi=config['output']['dpi'])
-
-            # Save layer comparison
-            comparison_file = output_dir / f"comparison_{frame_count:04d}.png"
+            if 'l1' in contributions:
+                plot_radio_map(contributions['l1'],
+                               title=f"L1 Macro - {current_time.isoformat()}",
+                               output_file=str(output_dir / f"l1_macro_{frame_count:04d}.png"),
+                               dpi=config['output']['dpi'])
+            if 'l2' in contributions:
+                plot_radio_map(contributions['l2'],
+                               title=f"L2 Terrain - {current_time.isoformat()}",
+                               output_file=str(output_dir / f"l2_topo_{frame_count:04d}.png"),
+                               dpi=config['output']['dpi'])
+            if 'l3' in contributions:
+                plot_radio_map(contributions['l3'],
+                               title=f"L3 Urban - {current_time.isoformat()}",
+                               output_file=str(output_dir / f"l3_urban_{frame_count:04d}.png"),
+                               dpi=config['output']['dpi'])
             plot_layer_comparison(
                 l1_map=contributions.get('l1'),
                 l2_map=contributions.get('l2'),
                 l3_map=contributions.get('l3'),
-                composite_map=contributions.get('composite'),
-                output_file=str(comparison_file),
-                dpi=config['output']['dpi']
+                composite_map=composite_map,
+                output_file=str(output_dir / f"comparison_{frame_count:04d}.png"),
+                dpi=config['output']['dpi'],
             )
 
-        # Save composite map
         if config['output']['save_composite']:
-            composite_file = output_dir / f"composite_{frame_count:04d}.png"
-            plot_radio_map(composite_map, title=f"Composite Radio Map - {current_time}",
-                         output_file=str(composite_file), dpi=config['output']['dpi'])
-
-            # Also save as numpy array
+            plot_radio_map(composite_map,
+                           title=f"Composite Radio Map - {current_time.isoformat()}",
+                           output_file=str(output_dir / f"composite_{frame_count:04d}.png"),
+                           dpi=config['output']['dpi'])
             npy_file = output_dir / f"composite_{frame_count:04d}.npy"
             np.save(npy_file, composite_map)
             logger.info(f"Saved composite map to {npy_file}")
 
-        # Log statistics
         logger.info(f"Composite map statistics:")
         logger.info(f"  Min loss: {np.min(composite_map):.2f} dB")
         logger.info(f"  Max loss: {np.max(composite_map):.2f} dB")
         logger.info(f"  Mean loss: {np.mean(composite_map):.2f} dB")
         logger.info(f"  Std loss: {np.std(composite_map):.2f} dB")
 
-        # Advance time
         current_time += time_step
-        frame_count += 1
+        frame_count  += 1
 
-    # End simulation
     sim_logger.end_simulation()
 
-    # Print performance summary
     if config['performance']['enable_profiling']:
         profiler = get_profiler()
         profiler.print_summary()

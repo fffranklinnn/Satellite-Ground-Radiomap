@@ -8,6 +8,7 @@ from .time_utils import StrictModeError, parse_iso_utc, require_utc
 from .frame_context import FrameContext, FrameMismatchError
 from .layer_states import EntryWaveState, TerrainState, UrbanRefinementState
 from .frame_builder import FrameBuilder
+from .multiscale_map import MultiScaleMap, ShapeError
 
 __all__ = [
     "GridSpec",
@@ -22,4 +23,6 @@ __all__ = [
     "EntryWaveState",
     "TerrainState",
     "UrbanRefinementState",
+    "MultiScaleMap",
+    "ShapeError",
 ]

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
@@ -343,6 +344,22 @@ class L3UrbanLayer(BaseLayer):
         """
         if frame.grid is None:
             raise ValueError("refine_urban requires frame.grid to be set.")
+
+        # Validate entry frame_id consistency
+        if entry is not None:
+            frame.check_frame_id(entry.frame_id)
+
+        # Warn if caller is injecting geometry via extras alongside a FrameContext
+        if context is not None:
+            ctx_check = LayerContext.from_any(context)
+            if ctx_check.incident_dir is not None and entry is not None:
+                warnings.warn(
+                    "refine_urban: incident_dir in LayerContext is deprecated when a "
+                    "FrameContext and EntryWaveState are provided. "
+                    "Incident direction is derived from entry state.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
 
         # Derive incident_dir from entry state if not in context
         ctx = LayerContext.from_any(context).merged_with_kwargs(kwargs)

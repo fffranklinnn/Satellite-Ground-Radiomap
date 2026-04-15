@@ -21,6 +21,7 @@ Coverage: 25.6 km, Resolution: 100 m/pixel
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -377,6 +378,23 @@ class L2TopoLayer(BaseLayer):
         """
         if frame.grid is None:
             raise ValueError("propagate_terrain requires frame.grid to be set.")
+
+        # Validate entry frame_id consistency
+        if entry is not None:
+            frame.check_frame_id(entry.frame_id)
+
+        # Warn if caller is injecting geometry via extras alongside a FrameContext
+        if context is not None:
+            ctx_check = LayerContext.from_any(context)
+            _GEOMETRY_EXTRAS = {"satellite_elevation_deg", "satellite_azimuth_deg",
+                                 "satellite_altitude_km", "satellite_slant_range_km"}
+            if _GEOMETRY_EXTRAS & set(ctx_check.extras.keys()):
+                warnings.warn(
+                    "propagate_terrain: satellite geometry in LayerContext.extras is deprecated "
+                    "when a FrameContext is provided. Geometry is derived from frame and entry state.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
 
         # Resolve satellite geometry: prefer frame, fall back to entry, then layer defaults
         sat_elevation_deg = frame.sat_elevation_deg

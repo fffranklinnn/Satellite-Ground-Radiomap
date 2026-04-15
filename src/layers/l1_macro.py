@@ -34,6 +34,7 @@ from skyfield.api import load, EarthSatellite, wgs84
 from .base import BaseLayer, LayerContext
 from ..context.frame_context import FrameContext
 from ..context.layer_states import EntryWaveState
+from ..context.time_utils import require_utc, StrictModeError
 from ..core.grid import (
     get_grid_latlon,
     get_azimuth_elevation,
@@ -276,7 +277,7 @@ class L1MacroLayer(BaseLayer):
     def _resolve_sim_datetime(self, timestamp: Optional[datetime]) -> datetime:
         """Resolve simulation datetime in UTC and sync Skyfield time state."""
         if timestamp is not None:
-            dt_utc = timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=timezone.utc)
+            dt_utc = require_utc(timestamp, strict=self.strict_data)
             self._sim_time = self.ts.from_datetime(dt_utc)
             return dt_utc
 
@@ -286,9 +287,20 @@ class L1MacroLayer(BaseLayer):
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt
 
+        if self.strict_data:
+            raise StrictModeError(
+                "[L1] No simulation timestamp provided in strict mode. "
+                "Pass an explicit UTC datetime to compute() or propagate_entry()."
+            )
         dt_now = datetime.now(timezone.utc)
         self._sim_time = self.ts.from_datetime(dt_now)
-        print("[L1] No simulation time set — using current UTC.")
+        import warnings
+        warnings.warn(
+            "[L1] No simulation time set — using current UTC. "
+            "Pass an explicit timestamp to avoid this warning.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         return dt_now
 
     def _print_antenna_params(self):

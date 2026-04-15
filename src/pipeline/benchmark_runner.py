@@ -34,7 +34,7 @@ from ..layers.l1_macro import L1MacroLayer
 from ..layers.l2_topo import L2TopoLayer
 from ..layers.l3_urban import L3UrbanLayer
 from ..pipeline.manifest_writer import ManifestWriter
-from ..products.manifest import ProductManifest
+from ..products.manifest import ProductManifest, collect_input_file_paths
 from ..products.projectors import export_dataset
 
 
@@ -119,6 +119,8 @@ class BenchmarkRunner:
             timestamp_utc=frame.timestamp.isoformat(),
             config=self.config,
             data_snapshot_id=self.data_snapshot_id,
+            input_files=collect_input_file_paths(self.config),
+            hash_files=True,
         )
 
         _, output_manifest = export_dataset(

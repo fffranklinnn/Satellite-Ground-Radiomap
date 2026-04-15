@@ -38,6 +38,46 @@ def _sha256_dict(d: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def collect_input_file_paths(config: dict) -> Dict[str, str]:
+    """
+    Extract configured input data file paths from a mission config dict.
+
+    Returns a {label: path_str} mapping for all configured data files
+    (TLE, IONEX, ERA5, DEM, L3 tiles). Missing or unconfigured keys are
+    silently omitted so callers can pass the result directly to
+    ProductManifest.build(input_files=..., hash_files=True).
+    """
+    paths: Dict[str, str] = {}
+    layers = config.get("layers", {})
+
+    # L1 inputs
+    l1 = layers.get("l1_macro", {})
+    tle_cfg = l1.get("tle", {})
+    tle_file = (tle_cfg.get("file") if isinstance(tle_cfg, dict) else None) or l1.get("tle_file")
+    if tle_file:
+        paths["tle_file"] = str(tle_file)
+    ionex_file = l1.get("ionex_file")
+    if ionex_file:
+        paths["ionex_file"] = str(ionex_file)
+    era5_file = l1.get("era5_file")
+    if era5_file:
+        paths["era5_file"] = str(era5_file)
+
+    # L2 inputs
+    l2 = layers.get("l2_topo", {})
+    dem_file = l2.get("dem_file")
+    if dem_file:
+        paths["dem_file"] = str(dem_file)
+
+    # L3 inputs
+    l3 = layers.get("l3_urban", {})
+    l3_data_dir = l3.get("data_dir") or l3.get("tiles_dir")
+    if l3_data_dir:
+        paths["l3_data_dir"] = str(l3_data_dir)
+
+    return paths
+
+
 def _deep_freeze(obj: Any) -> Any:
     """
     Recursively convert mutable containers to immutable equivalents.

@@ -35,7 +35,7 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import parse_iso_utc  # shared strict UTC helper
-from src.products.manifest import ProductManifest
+from src.products.manifest import ProductManifest, collect_input_file_paths
 from src.products.projectors import export_dataset
 from src.pipeline.manifest_writer import ManifestWriter
 from src.utils import plot_radio_map
@@ -359,6 +359,7 @@ def main() -> None:
     l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon)
     l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon)
     frame_builder = build_frame_builder_for_script(config, origin_lat, origin_lon)
+    input_file_paths = collect_input_file_paths(config)
 
     if target_norad_ids:
         l1_layer.target_norad_ids = target_norad_ids
@@ -551,6 +552,8 @@ def main() -> None:
                     timestamp_utc=ts.isoformat(),
                     config=config,
                     data_snapshot_id=config.get("data_validation", {}).get("snapshot_id", ""),
+                    input_files=input_file_paths,
+                    hash_files=True,
                     fallbacks_used=l1_layer.fallbacks_used,
                 )
                 written, _ = export_dataset(

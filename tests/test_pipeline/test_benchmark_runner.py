@@ -25,7 +25,7 @@ from src.context.layer_states import EntryWaveState, TerrainState, UrbanRefineme
 from src.context.multiscale_map import MultiScaleMap
 from src.pipeline.benchmark_runner import BenchmarkRunner
 from src.pipeline.manifest_writer import ManifestWriter
-from src.products.manifest import ProductManifest
+from src.products.manifest import ProductManifest, collect_input_file_paths
 
 
 # ---------------------------------------------------------------------------
@@ -411,4 +411,90 @@ class TestRegressionReportSchema:
         assert "manifest_checks" in report
         assert isinstance(report["array_comparisons"], list)
         assert isinstance(report["manifest_checks"], list)
+
+    def test_regression_report_all_passed(self):
+        """Regression report must have all_passed=True when generated."""
+        if not self.REPORT_PATH.exists():
+            pytest.skip("Regression report not yet generated.")
+        report = json.loads(self.REPORT_PATH.read_text())
+        if report.get("all_passed") is None:
+            pytest.skip("Regression report is a stub; run benchmarks/run_regression.py first.")
+        assert report["all_passed"] is True, (
+            f"Regression report has failures: {report.get('array_comparisons')}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# collect_input_file_paths and input_file_hashes reproducibility (task20b)
+# ---------------------------------------------------------------------------
+
+class TestInputFileHashes:
+    def test_collect_input_file_paths_empty_config(self):
+        """collect_input_file_paths returns empty dict for config with no layers."""
+        assert collect_input_file_paths({}) == {}
+
+    def test_collect_input_file_paths_extracts_tle(self, tmp_path):
+        """collect_input_file_paths extracts tle_file from l1_macro config."""
+        tle = tmp_path / "test.tle"
+        tle.write_text("dummy")
+        cfg = {"layers": {"l1_macro": {"tle_file": str(tle)}}}
+        paths = collect_input_file_paths(cfg)
+        assert "tle_file" in paths
+        assert paths["tle_file"] == str(tle)
+
+    def test_collect_input_file_paths_extracts_dem(self, tmp_path):
+        """collect_input_file_paths extracts dem_file from l2_topo config."""
+        dem = tmp_path / "dem.tif"
+        dem.write_bytes(b"dummy")
+        cfg = {"layers": {"l2_topo": {"dem_file": str(dem)}}}
+        paths = collect_input_file_paths(cfg)
+        assert "dem_file" in paths
+
+    def test_input_file_hashes_populated_when_files_exist(self, tmp_path):
+        """ProductManifest.build with hash_files=True populates input_file_hashes."""
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"hello")
+        manifest = ProductManifest.build(
+            frame_id="f1",
+            timestamp_utc="2025-01-03T00:00:00+00:00",
+            config=CONFIG,
+            input_files={"data": str(f)},
+            hash_files=True,
+        )
+        assert "data" in manifest.input_file_hashes
+        assert len(manifest.input_file_hashes["data"]) == 64  # SHA-256 hex
+
+    def test_input_file_hashes_stable_across_runs(self, tmp_path):
+        """Two runs with the same input file produce identical input_file_hashes."""
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"stable content")
+        m1 = ProductManifest.build(
+            frame_id="f1", timestamp_utc="2025-01-03T00:00:00+00:00",
+            config=CONFIG, input_files={"data": str(f)}, hash_files=True,
+        )
+        m2 = ProductManifest.build(
+            frame_id="f1", timestamp_utc="2025-01-03T00:00:00+00:00",
+            config=CONFIG, input_files={"data": str(f)}, hash_files=True,
+        )
+        assert m1.input_file_hashes == m2.input_file_hashes
+
+    def test_benchmark_runner_input_file_hashes_with_real_files(self, tmp_path):
+        """BenchmarkRunner.run_frame returns manifest with non-empty input_file_hashes when config has files."""
+        tle = tmp_path / "test.tle"
+        tle.write_text("dummy tle content")
+        cfg_with_files = {
+            **CONFIG,
+            "layers": {"l1_macro": {"tle_file": str(tle)}},
+        }
+        l1, l2, l3 = _make_mock_layers("hash_input_frame")
+        fb = _make_frame_builder()
+        runner = BenchmarkRunner(
+            frame_builder=fb, l1_layer=l1, l2_layer=l2, l3_layer=l3,
+            config=cfg_with_files, data_snapshot_id=SNAPSHOT_ID,
+        )
+        frame = FrameContext(frame_id="hash_input_frame", timestamp=TS_UTC, grid=GRID)
+        with patch.object(runner.frame_builder, "build", return_value=frame):
+            manifest = runner.run_frame(TS_UTC, tmp_path / "out", ["path_loss_map"])
+        assert "tle_file" in manifest.input_file_hashes
+        assert len(manifest.input_file_hashes["tle_file"]) == 64
 

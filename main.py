@@ -27,7 +27,7 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import require_utc
-from src.products.manifest import ProductManifest
+from src.products.manifest import ProductManifest, collect_input_file_paths
 from src.products.projectors import export_dataset
 from src.pipeline.manifest_writer import ManifestWriter
 from src.utils import setup_logger, SimulationLogger, plot_radio_map, plot_layer_comparison
@@ -153,6 +153,7 @@ def run_simulation(config: dict, output_dir: Path):
     # Build a data_snapshot_id from config hash for provenance tracking
     from src.products.manifest import _sha256_dict as _cfg_hash
     data_snapshot_id = config.get('data_validation', {}).get('snapshot_id', '')
+    input_file_paths = collect_input_file_paths(config)
 
     current_time = start_time
     frame_count  = 0
@@ -237,6 +238,8 @@ def run_simulation(config: dict, output_dir: Path):
                 timestamp_utc=frame.timestamp.isoformat(),
                 config=config,
                 data_snapshot_id=data_snapshot_id,
+                input_files=input_file_paths,
+                hash_files=True,
                 fallbacks_used=frame_fallbacks,
             )
             written, _ = export_dataset(

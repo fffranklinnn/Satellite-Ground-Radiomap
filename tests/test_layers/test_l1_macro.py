@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from src.context.time_utils import StrictModeError
+
 from src.layers.l1_macro import L1MacroLayer
 from src.context import GridSpec, FrameBuilder
 
@@ -191,3 +193,51 @@ def test_l1_propagate_entry_component_decomposition():
         atol=1e-3,
         err_msg="total_loss_db != fspl + atm + iono + pol - gain for non-occluded pixels",
     )
+
+
+# ---------------------------------------------------------------------------
+# Strict-mode fallback tests (task20 / AC-6)
+# ---------------------------------------------------------------------------
+
+def test_l1_strict_mode_missing_ionex_raises_strict_mode_error(tmp_path):
+    """Missing IONEX in strict mode must raise StrictModeError, not FileNotFoundError."""
+    cfg = {
+        **BASE_CONFIG,
+        "strict_data": True,
+        "ionex_file": str(tmp_path / "nonexistent.INX"),
+    }
+    with pytest.raises(StrictModeError):
+        L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+
+
+def test_l1_strict_mode_missing_era5_raises_strict_mode_error(tmp_path):
+    """Unreadable ERA5 in strict mode must raise StrictModeError."""
+    # Write a file that exists but is not valid NetCDF so load_era5 returns None
+    bad_era5 = tmp_path / "bad.nc"
+    bad_era5.write_bytes(b"not a netcdf file")
+    cfg = {
+        **BASE_CONFIG,
+        "strict_data": True,
+        "era5_file": str(bad_era5),
+    }
+    with pytest.raises(StrictModeError):
+        L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+
+
+def test_l1_strict_mode_no_timestamp_raises_strict_mode_error():
+    """No timestamp in strict mode must raise StrictModeError."""
+    cfg = {**BASE_CONFIG, "strict_data": True}
+    layer = L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+    with pytest.raises(StrictModeError):
+        layer._resolve_sim_datetime(None)
+
+
+def test_l1_non_strict_missing_ionex_does_not_raise(tmp_path):
+    """Missing IONEX in non-strict mode must not raise; fallback is recorded."""
+    cfg = {
+        **BASE_CONFIG,
+        "strict_data": False,
+        "ionex_file": str(tmp_path / "nonexistent.INX"),
+    }
+    layer = L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+    assert any("IONEX" in fb for fb in layer.fallbacks_used)

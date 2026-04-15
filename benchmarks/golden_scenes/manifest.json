@@ -1,0 +1,75 @@
+{
+  "capture_time_utc": "2026-04-15T02:35:38.770284+00:00",
+  "config_hash": "3330172d58470f3a716c58249056f1484cf93b2dfe6b6bd74c117a44944f1ac2",
+  "config_path": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/golden_scenes_config.yaml",
+  "frame_time": "2025-01-03 00:00:00",
+  "origin_lat": 34.3416,
+  "origin_lon": 108.9398,
+  "data_files": {
+    "ionex_file": {
+      "path": "data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250030000_01D_15M_GIM.INX.gz",
+      "sha256": "ddca2913df79985c6ac68d4303a7333ca6680c46a3f8a486de6b5534ee692ef2"
+    },
+    "era5_file": {
+      "path": "data/l1_space/data/data_stream-oper_stepType-instant.nc",
+      "sha256": "a715509fde6b7f9a50a9ac2617b2201c9d3a863d3793d68a818565cab12069d5"
+    },
+    "tle_file": {
+      "path": "data/starlink-2025-tle/2025-01-03.tle",
+      "sha256": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2"
+    },
+    "dem_file": {
+      "path": "data/l2_topo/china_dem_30.tif",
+      "sha256": "d796a25eae49bb4390f4905a2a887fe8e550d1bfcc27b74f359e5684285eee5b"
+    }
+  },
+  "scenes": {
+    "l1_only": {
+      "file": "l1_only.npy",
+      "shape": [
+        256,
+        256
+      ],
+      "min_db": 137.14944458007812,
+      "max_db": 176.3036651611328,
+      "mean_db": 141.73834228515625,
+      "elapsed_s": 2.5206432768609375
+    },
+    "l1l2_composite": {
+      "file": "l1l2_composite.npy",
+      "shape": [
+        256,
+        256
+      ],
+      "min_db": 137.58401489257812,
+      "max_db": 137.5974578857422,
+      "mean_db": 137.59071350097656,
+      "elapsed_s": 2.4616458090022206
+    },
+    "l1l2l3_composite": {
+      "file": "l1l2l3_composite.npy",
+      "shape": [
+        256,
+        256
+      ],
+      "min_db": 137.58401489257812,
+      "max_db": 167.59719848632812,
+      "mean_db": 141.20643615722656,
+      "elapsed_s": 2.3448343710042536
+    }
+  },
+  "spatial_delta_note": {
+    "description": "L2 currently uses SW-corner origin convention. After the GridSpec fix, L2 will shift its DEM window by approximately half the coverage in both lat and lon directions.",
+    "l2_current_sw_corner": {
+      "lat": 34.3416,
+      "lon": 108.9398
+    },
+    "l2_expected_center_after_fix": {
+      "lat": 34.456915315315314,
+      "lon": 109.07945951565456
+    },
+    "delta_lat_deg": 0.11531531531531532,
+    "delta_lon_deg": 0.13965951565456045,
+    "coverage_km": 25.6
+  }
+}

@@ -1,0 +1,82 @@
+data_validation:
+  strict: false
+layers:
+  l1_macro:
+    coverage_km: 256.0
+    enabled: true
+    era5_file: data/l1_space/data/data_stream-oper_stepType-instant.nc
+    frequency_ghz: 14.5
+    grid_size: 256
+    ionex_file: data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250030000_01D_15M_GIM.INX.gz
+    ionosphere:
+      enable_faraday: false
+      fallback_b_t: 4.5e-05
+      faraday_linear_only: true
+      max_mapping_factor: 8.0
+      shell_height_km: 350.0
+      use_ipp: true
+      use_slant_tec: true
+    polarization:
+      mismatch_angle_deg: 0.0
+      mode: linear
+    rain_rate_mm_h: 0.0
+    resolution_m: 1000.0
+    satellite_altitude_km: 550.0
+    tec: 10.0
+    tle_file: data/starlink-2025-tle/2025-01-03.tle
+  l2_topo:
+    coverage_km: 25.6
+    dem_file: data/l2_topo/china_dem_30.tif
+    enabled: true
+    frequency_ghz: 14.5
+    grid_size: 256
+    resolution_m: 100.0
+    satellite_azimuth_deg: 180.0
+    satellite_elevation_deg: 45.0
+  l3_urban:
+    coverage_km: 0.256
+    enabled: true
+    grid_size: 256
+    incident_dir:
+      az_deg: 180.0
+      el_deg: 45.0
+    nlos_loss_db: 20.0
+    occ_loss_db: 30.0
+    resolution_m: 1.0
+    tile_cache_root: data/l3_urban/xian/tiles_60
+logging:
+  level: INFO
+  log_file: null
+  verbose: true
+mission:
+  description: Baseline capture for regression testing
+  name: SG-MRM Golden Scenes Capture
+  version: '1.0'
+origin:
+  altitude_m: 397.0
+  latitude: 34.3416
+  longitude: 108.9398
+output:
+  colormap: viridis
+  directory: output
+  dpi: 150
+  format: png
+  save_composite: true
+  save_individual_layers: true
+performance:
+  enable_profiling: false
+  num_workers: 4
+  parallel_processing: false
+rf:
+  frequency_ghz: 14.5
+  rx_polarization: RHCP
+  tx_polarization: RHCP
+  tx_power_dbm: 40.0
+satellite:
+  altitude_km: 550.0
+  tle_file: null
+time:
+  end: '2025-01-03T00:00:00'
+  start: '2025-01-03T00:00:00'
+  step_hours: 6
+  timezone: UTC

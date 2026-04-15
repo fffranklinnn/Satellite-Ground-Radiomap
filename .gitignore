@@ -101,6 +101,10 @@ docs/_build/
 docs/_static/
 docs/_templates/
 
+# Benchmark regression run outputs (runtime-generated)
+benchmarks/baselines/regression_run/
+benchmarks/baselines/regression_run_repro/
+
 # Temporary files
 *.tmp
 *.bak

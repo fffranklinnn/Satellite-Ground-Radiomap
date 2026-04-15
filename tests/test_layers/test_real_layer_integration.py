@@ -294,3 +294,172 @@ class TestL3FrameMismatch:
         layer = self._make_l3_with_mock_tile(l3_config)
         urban = layer.refine_urban(frame, entry=entry_state)
         assert np.all(urban.nlos_mask == (urban.urban_residual_db > 0))
+
+
+# ---------------------------------------------------------------------------
+# Geometry consistency: single frame preserves az/el/slant_range/norad_id/timestamp
+# across L1 → L2 → L3 propagation
+# ---------------------------------------------------------------------------
+
+class TestGeometryConsistency:
+    """
+    Verify that a single FrameContext carries consistent geometry metadata
+    from L1 (EntryWaveState) into L2 (TerrainState) and L3 (UrbanRefinementState).
+
+    The key invariants:
+    - All states share the same frame_id
+    - L2 uses center-pixel az/el from entry state for its satellite geometry
+    - L3 uses center-pixel az/el from entry state for its incident direction
+    - norad_id from entry state is preserved
+    - timestamp from frame is preserved in all states
+    """
+
+    def _make_l2_with_mock_dem(self, l2_config):
+        layer = L2TopoLayer(l2_config, ORIGIN_LAT, ORIGIN_LON)
+        dem = np.zeros((256, 256), dtype=np.float32)
+        layer._load_dem_patch = MagicMock(return_value=dem)
+        layer._validate_bounds = MagicMock()
+        return layer
+
+    def _make_l3_with_mock_tile(self, l3_config):
+        layer = L3UrbanLayer(l3_config, ORIGIN_LAT, ORIGIN_LON)
+        height_m = np.zeros((256, 256), dtype=np.float32)
+        layer._load_tile_cache = MagicMock(return_value=(height_m, None))
+        return layer
+
+    def test_frame_id_consistent_across_all_states(
+        self, l2_config, l3_config, frame, entry_state
+    ):
+        """All three states must carry the same frame_id as the frame."""
+        l2 = self._make_l2_with_mock_dem(l2_config)
+        l3 = self._make_l3_with_mock_tile(l3_config)
+
+        terrain = l2.propagate_terrain(frame, entry=entry_state)
+        urban = l3.refine_urban(frame, entry=entry_state)
+
+        assert entry_state.frame_id == frame.frame_id
+        assert terrain.frame_id == frame.frame_id
+        assert urban.frame_id == frame.frame_id
+
+    def test_norad_id_preserved_in_entry_state(self, frame, entry_state):
+        """norad_id from entry_state must match the frame's satellite."""
+        assert entry_state.norad_id == "25544"
+
+    def test_timestamp_preserved_in_frame(self, frame):
+        """Frame timestamp must be UTC-aware and match the construction timestamp."""
+        assert frame.timestamp.tzinfo is not None
+        assert frame.timestamp == TS_UTC
+
+    def test_center_pixel_elevation_consistent_l1_to_l2(
+        self, l2_config, frame, entry_state
+    ):
+        """L2 must use center-pixel elevation from entry state for satellite geometry."""
+        l2 = self._make_l2_with_mock_dem(l2_config)
+
+        # Capture what elevation L2 uses by inspecting the compute call
+        captured_kwargs = {}
+        original_compute = l2.compute
+
+        def capturing_compute(origin_lat, origin_lon, timestamp=None, context=None, **kwargs):
+            captured_kwargs.update(context.extras if context else {})
+            return original_compute(origin_lat, origin_lon, timestamp=timestamp, context=context, **kwargs)
+
+        l2.compute = capturing_compute
+        l2.propagate_terrain(frame, entry=entry_state)
+
+        # L2 should have received the center-pixel elevation from entry_state
+        cy, cx = entry_state.grid.ny // 2, entry_state.grid.nx // 2
+        expected_el = float(entry_state.elevation_deg[cy, cx])
+        assert "satellite_elevation_deg" in captured_kwargs
+        assert abs(captured_kwargs["satellite_elevation_deg"] - expected_el) < 1e-4
+
+    def test_center_pixel_azimuth_consistent_l1_to_l2(
+        self, l2_config, frame, entry_state
+    ):
+        """L2 must use center-pixel azimuth from entry state for satellite geometry."""
+        l2 = self._make_l2_with_mock_dem(l2_config)
+
+        captured_kwargs = {}
+        original_compute = l2.compute
+
+        def capturing_compute(origin_lat, origin_lon, timestamp=None, context=None, **kwargs):
+            captured_kwargs.update(context.extras if context else {})
+            return original_compute(origin_lat, origin_lon, timestamp=timestamp, context=context, **kwargs)
+
+        l2.compute = capturing_compute
+        l2.propagate_terrain(frame, entry=entry_state)
+
+        cy, cx = entry_state.grid.ny // 2, entry_state.grid.nx // 2
+        expected_az = float(entry_state.azimuth_deg[cy, cx])
+        assert "satellite_azimuth_deg" in captured_kwargs
+        assert abs(captured_kwargs["satellite_azimuth_deg"] - expected_az) < 1e-4
+
+    def test_center_pixel_elevation_consistent_l1_to_l3(
+        self, l3_config, frame, entry_state
+    ):
+        """L3 must derive incident_dir from center-pixel az/el of entry state."""
+        l3 = self._make_l3_with_mock_tile(l3_config)
+
+        # Capture the incident_dir used by L3
+        captured_incident = {}
+        original_compute = l3.compute
+
+        def capturing_compute(origin_lat=None, origin_lon=None, timestamp=None, context=None, **kwargs):
+            if context is not None:
+                from src.layers.base import LayerContext
+                ctx = LayerContext.from_any(context)
+                if ctx.incident_dir is not None:
+                    captured_incident["incident_dir"] = ctx.incident_dir
+            return original_compute(
+                origin_lat=origin_lat, origin_lon=origin_lon,
+                timestamp=timestamp, context=context, **kwargs
+            )
+
+        l3.compute = capturing_compute
+        l3.refine_urban(frame, entry=entry_state)
+
+        cy, cx = entry_state.grid.ny // 2, entry_state.grid.nx // 2
+        expected_az = float(entry_state.azimuth_deg[cy, cx])
+        expected_el = float(entry_state.elevation_deg[cy, cx])
+
+        assert "incident_dir" in captured_incident
+        inc = captured_incident["incident_dir"]
+        assert abs(inc["az_deg"] - expected_az) < 1e-4
+        assert abs(inc["el_deg"] - expected_el) < 1e-4
+
+    def test_slant_range_propagated_to_l2(self, l2_config, frame, entry_state):
+        """L2 uses satellite_altitude_km from frame for slant range estimation."""
+        l2 = self._make_l2_with_mock_dem(l2_config)
+
+        captured_kwargs = {}
+        original_compute = l2.compute
+
+        def capturing_compute(origin_lat, origin_lon, timestamp=None, context=None, **kwargs):
+            captured_kwargs.update(context.extras if context else {})
+            return original_compute(origin_lat, origin_lon, timestamp=timestamp, context=context, **kwargs)
+
+        l2.compute = capturing_compute
+        l2.propagate_terrain(frame, entry=entry_state)
+
+        # L2 receives satellite_altitude_km from frame.sat_alt_m (set by FrameBuilder)
+        # slant_range_km is estimated internally when not explicitly provided
+        assert "satellite_elevation_deg" in captured_kwargs
+        assert "satellite_azimuth_deg" in captured_kwargs
+        # altitude is passed when frame.sat_alt_m is set
+        if frame.sat_alt_m is not None:
+            assert "satellite_altitude_km" in captured_kwargs
+            assert abs(captured_kwargs["satellite_altitude_km"] - frame.sat_alt_m / 1000.0) < 0.1
+
+    def test_grid_consistent_across_all_states(
+        self, l2_config, l3_config, frame, entry_state
+    ):
+        """All states must carry the same GridSpec as the frame."""
+        l2 = self._make_l2_with_mock_dem(l2_config)
+        l3 = self._make_l3_with_mock_tile(l3_config)
+
+        terrain = l2.propagate_terrain(frame, entry=entry_state)
+        urban = l3.refine_urban(frame, entry=entry_state)
+
+        assert entry_state.grid is frame.grid
+        assert terrain.grid is frame.grid
+        assert urban.grid is frame.grid

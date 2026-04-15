@@ -34,7 +34,7 @@ class TestProductManifest:
         assert m.data_snapshot_id == "snap_001"
         assert m.input_file_hashes == {}
         assert m.output_file_hashes == {}
-        assert m.fallbacks_used == []
+        assert m.fallbacks_used == ()
         assert m.metadata == {}
 
     def test_with_all_fields(self):
@@ -60,6 +60,36 @@ class TestProductManifest:
         )
         with pytest.raises((AttributeError, TypeError)):
             m.frame_id = "other"
+
+    def test_input_file_hashes_deeply_immutable(self):
+        """input_file_hashes must be a read-only mapping (MappingProxyType)."""
+        m = ProductManifest(
+            frame_id=FRAME_ID, timestamp_utc=TS_UTC,
+            config_hash="x", data_snapshot_id="y",
+            input_file_hashes={"tle": "abc"},
+        )
+        with pytest.raises(TypeError):
+            m.input_file_hashes["new_key"] = "value"
+
+    def test_fallbacks_used_is_tuple(self):
+        """fallbacks_used must be a tuple (immutable sequence)."""
+        m = ProductManifest(
+            frame_id=FRAME_ID, timestamp_utc=TS_UTC,
+            config_hash="x", data_snapshot_id="y",
+            fallbacks_used=["fallback_a"],
+        )
+        assert isinstance(m.fallbacks_used, tuple)
+        assert m.fallbacks_used == ("fallback_a",)
+
+    def test_metadata_deeply_immutable(self):
+        """metadata must be a read-only mapping."""
+        m = ProductManifest(
+            frame_id=FRAME_ID, timestamp_utc=TS_UTC,
+            config_hash="x", data_snapshot_id="y",
+            metadata={"k": "v"},
+        )
+        with pytest.raises(TypeError):
+            m.metadata["new_key"] = "value"
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +142,7 @@ class TestProductManifestJsonRoundTrip:
         )
         m2 = ProductManifest.from_dict(m.to_dict())
         assert m2.input_file_hashes == {}
-        assert m2.fallbacks_used == []
+        assert m2.fallbacks_used == ()
 
 
 # ---------------------------------------------------------------------------

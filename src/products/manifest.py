@@ -19,7 +19,8 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from types import MappingProxyType
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def _sha256_file(path: str) -> str:
@@ -59,16 +60,29 @@ class ProductManifest:
     data_snapshot_id: str
     input_file_hashes: Dict[str, str] = field(default_factory=dict)
     output_file_hashes: Dict[str, str] = field(default_factory=dict)
-    fallbacks_used: List[str] = field(default_factory=list)
+    fallbacks_used: Tuple[str, ...] = field(default_factory=tuple)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Enforce immutability of mutable fields by converting to frozen types
-        # (dataclass frozen=True prevents reassignment but not mutation of dicts/lists)
-        object.__setattr__(self, "input_file_hashes", dict(self.input_file_hashes))
-        object.__setattr__(self, "output_file_hashes", dict(self.output_file_hashes))
-        object.__setattr__(self, "fallbacks_used", list(self.fallbacks_used))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        # Convert mutable containers to deeply immutable types:
+        # - dicts → MappingProxyType (read-only view, raises TypeError on mutation)
+        # - lists → tuple (immutable sequence)
+        object.__setattr__(
+            self, "input_file_hashes",
+            MappingProxyType(dict(self.input_file_hashes))
+        )
+        object.__setattr__(
+            self, "output_file_hashes",
+            MappingProxyType(dict(self.output_file_hashes))
+        )
+        object.__setattr__(
+            self, "fallbacks_used",
+            tuple(self.fallbacks_used)
+        )
+        object.__setattr__(
+            self, "metadata",
+            MappingProxyType(dict(self.metadata))
+        )
 
     # ------------------------------------------------------------------
     # Serialization

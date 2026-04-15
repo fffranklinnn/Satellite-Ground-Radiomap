@@ -25,7 +25,9 @@ from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
 from src.engine import RadioMapAggregator
 from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
+from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import require_utc
+from src.products.projectors import export_dataset
 from src.utils import setup_logger, SimulationLogger, plot_radio_map, plot_layer_comparison
 from src.utils import get_profiler
 from src.utils.data_validation import (
@@ -164,18 +166,22 @@ def run_simulation(config: dict, output_dir: Path):
         terrain = l2_layer.propagate_terrain(frame, entry=entry) if l2_layer else None
         urban   = l3_layer.refine_urban(frame, entry=entry)      if l3_layer else None
 
-        # Assemble composite map from typed states
-        composite_map = np.zeros((frame.grid.ny, frame.grid.nx), dtype=np.float32)
+        # Assemble composite map via MultiScaleMap.compose() (masked residual compositor)
+        msm = MultiScaleMap.compose(
+            frame_id=frame.frame_id,
+            grid=frame.grid,
+            entry=entry,
+            terrain=terrain,
+            urban=urban,
+        )
+        composite_map = msm.composite_db
         contributions = {}
-        if entry is not None:
-            contributions['l1'] = entry.total_loss_db
-            composite_map += entry.total_loss_db
-        if terrain is not None:
-            contributions['l2'] = terrain.loss_db
-            composite_map += terrain.loss_db
-        if urban is not None:
-            contributions['l3'] = urban.urban_residual_db
-            composite_map += urban.urban_residual_db
+        if msm.l1_db is not None:
+            contributions['l1'] = msm.l1_db
+        if msm.l2_db is not None:
+            contributions['l2'] = msm.l2_db
+        if msm.l3_db is not None:
+            contributions['l3'] = msm.l3_db
         contributions['composite'] = composite_map
 
         sim_logger.log_layer_end("FramePipeline")
@@ -211,9 +217,14 @@ def run_simulation(config: dict, output_dir: Path):
                            title=f"Composite Radio Map - {current_time.isoformat()}",
                            output_file=str(output_dir / f"composite_{frame_count:04d}.png"),
                            dpi=config['output']['dpi'])
-            npy_file = output_dir / f"composite_{frame_count:04d}.npy"
-            np.save(npy_file, composite_map)
-            logger.info(f"Saved composite map to {npy_file}")
+            written = export_dataset(
+                output_dir=output_dir,
+                frame=frame,
+                product_types=["path_loss_map"],
+                multiscale=msm,
+                prefix=f"composite_{frame_count:04d}_",
+            )
+            logger.info(f"Saved composite map to {written['path_loss_map']}")
 
         logger.info(f"Composite map statistics:")
         logger.info(f"  Min loss: {np.min(composite_map):.2f} dB")

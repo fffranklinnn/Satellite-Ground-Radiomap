@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
 from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
+from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import parse_iso_utc  # shared strict UTC helper
 from src.utils import plot_radio_map
 
@@ -253,7 +254,14 @@ def compute_satellite_maps(
     l1_map = entry.total_loss_db
     l2_map = terrain.loss_db
     l3_map = urban.urban_residual_db
-    total_map = (l1_map + l2_map + l3_map).astype(np.float32)
+    msm = MultiScaleMap.compose(
+        frame_id=frame.frame_id,
+        grid=frame.grid,
+        entry=entry,
+        terrain=terrain,
+        urban=urban,
+    )
+    total_map = msm.composite_db
     return l1_map, l2_map, l3_map, total_map, sat
 
 

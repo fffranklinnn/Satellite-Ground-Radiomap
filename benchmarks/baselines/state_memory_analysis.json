@@ -1,0 +1,85 @@
+{
+  "schema_version": "1",
+  "description": "Memory/performance analysis for typed layer state objects. Defines ownership rules, dtype policy, and memory budget for large-scale workloads.",
+  "analysis_date": "2026-04-15",
+  "grid_reference": {
+    "nx": 256,
+    "ny": 256,
+    "float32_array_bytes": 262144,
+    "float32_array_mb": 0.25,
+    "bool_array_bytes": 65536,
+    "bool_array_mb": 0.0625
+  },
+  "state_objects": {
+    "EntryWaveState": {
+      "float32_arrays": [
+        "total_loss_db", "fspl_db", "atm_db", "iono_db", "pol_db", "gain_db",
+        "elevation_deg", "azimuth_deg", "slant_range_m"
+      ],
+      "bool_arrays": ["occlusion_mask"],
+      "scalar_fields": ["norad_id", "sat_lat_deg", "sat_lon_deg", "sat_alt_m"],
+      "float32_count": 9,
+      "bool_count": 1,
+      "array_memory_mb": 2.3125,
+      "notes": "9 float32 arrays × 0.25 MB + 1 bool array × 0.0625 MB = 2.3125 MB per frame"
+    },
+    "TerrainState": {
+      "float32_arrays": ["loss_db"],
+      "bool_arrays": ["occlusion_mask"],
+      "optional_float32_arrays": ["dem_grid"],
+      "float32_count": 1,
+      "bool_count": 1,
+      "array_memory_mb_without_dem": 0.3125,
+      "array_memory_mb_with_dem": 0.5625,
+      "notes": "1 float32 + 1 bool = 0.3125 MB; optional dem_grid adds 0.25 MB"
+    },
+    "UrbanRefinementState": {
+      "float32_arrays": ["urban_residual_db"],
+      "bool_arrays": ["support_mask", "nlos_mask"],
+      "float32_count": 1,
+      "bool_count": 2,
+      "array_memory_mb": 0.375,
+      "notes": "1 float32 × 0.25 MB + 2 bool × 0.0625 MB = 0.375 MB per frame"
+    },
+    "MultiScaleMap": {
+      "float32_arrays": ["composite_db"],
+      "optional_float32_arrays": ["l1_db", "l2_db", "l3_db"],
+      "optional_bool_arrays": ["l3_support_mask"],
+      "float32_count_min": 1,
+      "float32_count_max": 4,
+      "bool_count_max": 1,
+      "array_memory_mb_min": 0.25,
+      "array_memory_mb_max": 1.0625,
+      "notes": "Minimum (composite only): 0.25 MB. Maximum (all layers): 4 × 0.25 + 1 × 0.0625 = 1.0625 MB"
+    }
+  },
+  "per_frame_budget": {
+    "all_states_without_dem_mb": 3.0,
+    "all_states_with_dem_mb": 3.25,
+    "all_states_plus_multiscale_max_mb": 4.3125,
+    "notes": "EntryWaveState (2.3125) + TerrainState (0.3125) + UrbanRefinementState (0.375) + MultiScaleMap max (1.0625) = 4.0625 MB per frame. Well within the 14 MB peak observed in performance_baseline.json."
+  },
+  "ownership_rules": {
+    "rule_1": "Each state object is owned by the layer that produced it. The caller receives a frozen reference; no mutation is permitted.",
+    "rule_2": "Arrays inside frozen dataclasses are not copy-protected by Python's frozen=True. Callers MUST NOT mutate array contents. Use .copy() if a mutable copy is needed.",
+    "rule_3": "frame_id must match across all states consumed in a single composition step. MultiScaleMap.compose() enforces this via FrameMismatchError.",
+    "rule_4": "States are single-frame objects. Time-series workloads must not accumulate states in memory; process and discard each frame.",
+    "rule_5": "Optional fields (dem_grid, norad_id, sat_*) may be None. Consumers must guard with 'is not None' checks."
+  },
+  "dtype_policy": {
+    "loss_arrays": "float32 — sufficient precision for dB values (< 0.001 dB rounding error at 200 dB range)",
+    "geometry_arrays": "float32 — sufficient for az/el (< 0.001 deg) and slant_range (< 1 m at 600 km)",
+    "mask_arrays": "bool (numpy bool_) — 4× smaller than float32; no precision loss",
+    "scalar_metadata": "Python float/str — not in hot path; no dtype constraint"
+  },
+  "large_scale_workload_budget": {
+    "target_workload": "large-scale dataset generation (1000+ frames)",
+    "per_frame_peak_mb": 4.3125,
+    "concurrent_frames": 1,
+    "total_state_memory_mb": 4.3125,
+    "baseline_overhead_mb": 14.01,
+    "headroom_mb": "Ample — state objects add < 5 MB on top of 14 MB baseline",
+    "recommendation": "Process frames sequentially; do not accumulate EntryWaveState/TerrainState/UrbanRefinementState across frames. Export each frame's product immediately after composition."
+  },
+  "baseline_reference": "benchmarks/baselines/performance_baseline.json"
+}

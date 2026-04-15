@@ -18,14 +18,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
 
 from ..context.frame_context import FrameContext
 from ..context.layer_states import EntryWaveState, TerrainState, UrbanRefinementState
 from ..context.multiscale_map import MultiScaleMap
-from ..products.manifest import ProductManifest
+from ..products.manifest import ProductManifest, _sha256_file
+
+if TYPE_CHECKING:
+    from ..pipeline.manifest_writer import ManifestWriter
 
 
 class UnknownProductTypeError(ValueError):
@@ -134,6 +137,7 @@ def export_dataset(
     multiscale: Optional[MultiScaleMap] = None,
     manifest: Optional[ProductManifest] = None,
     prefix: str = "",
+    manifest_writer: Optional[ManifestWriter] = None,
 ) -> Dict[str, str]:
     """
     Export a set of product arrays to NPY files with a JSON sidecar.
@@ -144,16 +148,22 @@ def export_dataset(
     A JSON sidecar is written to:
         <output_dir>/<prefix>dataset.json
 
+    If manifest_writer is provided, a ProductManifest with output file hashes
+    is appended to the JSONL manifest file.
+
     Args:
-        output_dir:    Directory to write output files.
-        frame:         FrameContext for this simulation frame.
-        product_types: List of product type strings to export.
-        entry:         EntryWaveState from L1.
-        terrain:       TerrainState from L2.
-        urban:         UrbanRefinementState from L3.
-        multiscale:    MultiScaleMap (used for path_loss_map if provided).
-        manifest:      ProductManifest to embed in the JSON sidecar.
-        prefix:        Optional filename prefix.
+        output_dir:       Directory to write output files.
+        frame:            FrameContext for this simulation frame.
+        product_types:    List of product type strings to export.
+        entry:            EntryWaveState from L1.
+        terrain:          TerrainState from L2.
+        urban:            UrbanRefinementState from L3.
+        multiscale:       MultiScaleMap (used for path_loss_map if provided).
+        manifest:         Existing ProductManifest to embed in the JSON sidecar.
+                          If None and manifest_writer is provided, a minimal one
+                          is built from frame metadata.
+        prefix:           Optional filename prefix.
+        manifest_writer:  ManifestWriter to append the output manifest record.
 
     Returns:
         Dict mapping product_type -> absolute file path (str).
@@ -171,8 +181,6 @@ def export_dataset(
         "timestamp_utc": frame.timestamp.isoformat(),
         "products": {},
     }
-    if manifest is not None:
-        sidecar["manifest"] = manifest.to_dict()
 
     for pt in product_types:
         arr = project(
@@ -188,6 +196,34 @@ def export_dataset(
             "shape": list(arr.shape),
             "dtype": str(arr.dtype),
         }
+
+    # Build output manifest with file hashes if a writer is provided
+    if manifest_writer is not None:
+        output_hashes = {pt: _sha256_file(written[pt]) for pt in written}
+        if manifest is not None:
+            # Augment existing manifest with output hashes
+            output_manifest = ProductManifest(
+                frame_id=manifest.frame_id,
+                timestamp_utc=manifest.timestamp_utc,
+                config_hash=manifest.config_hash,
+                data_snapshot_id=manifest.data_snapshot_id,
+                input_file_hashes=dict(manifest.input_file_hashes),
+                output_file_hashes=output_hashes,
+                fallbacks_used=list(manifest.fallbacks_used),
+                metadata=dict(manifest.metadata),
+            )
+        else:
+            output_manifest = ProductManifest(
+                frame_id=frame.frame_id,
+                timestamp_utc=frame.timestamp.isoformat(),
+                config_hash="",
+                data_snapshot_id="",
+                output_file_hashes=output_hashes,
+            )
+        manifest_writer.write(output_manifest)
+        sidecar["manifest"] = output_manifest.to_dict()
+    elif manifest is not None:
+        sidecar["manifest"] = manifest.to_dict()
 
     sidecar_path = out / f"{prefix}dataset.json"
     sidecar_path.write_text(

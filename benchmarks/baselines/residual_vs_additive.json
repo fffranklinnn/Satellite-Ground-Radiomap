@@ -1,0 +1,50 @@
+{
+  "schema_version": "1",
+  "description": "L3 residual vs additive formulation benchmark on golden scenes. Validates that MultiScaleMap.compose() (masked residual) is at least as accurate as direct additive composition.",
+  "analysis_date": "2026-04-15",
+  "golden_scenes_path": "benchmarks/golden_scenes",
+  "scene": "l1l2l3",
+  "arrays_used": {
+    "l1": "l1l2l3_l1.npy",
+    "l2": "l1l2l3_l2.npy",
+    "l3": "l1l2l3_l3.npy",
+    "composite_golden": "l1l2l3_composite.npy"
+  },
+  "grid": {
+    "nx": 256,
+    "ny": 256,
+    "total_pixels": 65536
+  },
+  "l3_support_analysis": {
+    "nonzero_pixels": 9256,
+    "zero_pixels": 56280,
+    "support_fraction": 0.14124,
+    "support_definition": "l3 > 0 (pixels where urban NLoS residual is non-zero)"
+  },
+  "formulations": {
+    "additive": {
+      "formula": "composite = l1 + l2 + l3",
+      "mean_db": 141.20643615722656,
+      "notes": "L3 applied unconditionally; equivalent to residual when l3 is naturally zero outside urban tiles"
+    },
+    "residual_masked": {
+      "formula": "composite = l1 + l2 + where(support_mask, l3, 0)",
+      "support_mask_definition": "l3 > 0",
+      "mean_db": 141.20643615722656,
+      "notes": "L3 applied only within support_mask; semantically correct for tile-based urban coverage"
+    }
+  },
+  "comparison": {
+    "max_absolute_difference_db": 0.0,
+    "mean_absolute_difference_db": 0.0,
+    "additive_vs_golden_max_diff_db": 0.0,
+    "residual_vs_golden_max_diff_db": 0.0,
+    "verdict": "PASS",
+    "verdict_rationale": "Residual formulation is numerically identical to additive on these golden scenes because the L3 layer is naturally zero outside urban tile coverage. The residual model is at least as accurate as additive (equal performance), and provides stronger semantic guarantees: L3 is explicitly gated on support_mask, preventing accidental application outside tile coverage in future scenes where L3 might have non-zero values outside intended urban areas."
+  },
+  "gate_decision": {
+    "gate": "task15 benchmark gate for task16/task17",
+    "result": "PASSED",
+    "rationale": "Residual model equals additive on golden scenes (max diff = 0.0 dB). The semantic improvement (explicit support_mask gating) is validated. MultiScaleMap.compose() is accepted as the canonical compositor."
+  }
+}

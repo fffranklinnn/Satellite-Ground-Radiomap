@@ -1,0 +1,72 @@
+{
+  "schema_version": "1",
+  "description": "Product type taxonomy for the SG-MRM simulation pipeline. Defines all supported product types, their sources, and export semantics.",
+  "analysis_date": "2026-04-15",
+  "product_types": {
+    "path_loss_map": {
+      "description": "Composite path loss map (dB) assembled from all active layers via MultiScaleMap.compose(). L3 residual applied only within support_mask.",
+      "source": "MultiScaleMap.composite_db or MultiScaleMap.compose(entry, terrain, urban)",
+      "dtype": "float32",
+      "shape": "[ny, nx]",
+      "units": "dB",
+      "required_states": ["MultiScaleMap or (EntryWaveState, TerrainState, UrbanRefinementState)"],
+      "category": "frame_map"
+    },
+    "visibility_mask": {
+      "description": "Boolean mask: True where satellite is visible (not occluded by horizon).",
+      "source": "~EntryWaveState.occlusion_mask",
+      "dtype": "bool",
+      "shape": "[ny, nx]",
+      "units": "boolean",
+      "required_states": ["EntryWaveState"],
+      "category": "frame_map"
+    },
+    "elevation_field": {
+      "description": "Per-pixel elevation angle to satellite (degrees above horizon).",
+      "source": "EntryWaveState.elevation_deg",
+      "dtype": "float32",
+      "shape": "[ny, nx]",
+      "units": "degrees",
+      "required_states": ["EntryWaveState"],
+      "category": "frame_map"
+    },
+    "azimuth_field": {
+      "description": "Per-pixel azimuth angle to satellite (degrees clockwise from North).",
+      "source": "EntryWaveState.azimuth_deg",
+      "dtype": "float32",
+      "shape": "[ny, nx]",
+      "units": "degrees",
+      "required_states": ["EntryWaveState"],
+      "category": "frame_map"
+    },
+    "terrain_blockage": {
+      "description": "Boolean mask: True where terrain blocks line-of-sight to satellite.",
+      "source": "TerrainState.occlusion_mask",
+      "dtype": "bool",
+      "shape": "[ny, nx]",
+      "units": "boolean",
+      "required_states": ["TerrainState"],
+      "category": "per_layer_contribution"
+    },
+    "urban_residual": {
+      "description": "Urban NLoS residual loss (dB). Non-zero only within urban tile coverage (support_mask).",
+      "source": "UrbanRefinementState.urban_residual_db",
+      "dtype": "float32",
+      "shape": "[ny, nx]",
+      "units": "dB",
+      "required_states": ["UrbanRefinementState"],
+      "category": "per_layer_contribution"
+    }
+  },
+  "categories": {
+    "frame_map": "Single-frame spatial map covering the full simulation grid",
+    "per_layer_contribution": "Per-layer contribution to the composite, useful for ablation studies",
+    "time_series_cube": "Stack of frame_maps across time (not yet implemented)",
+    "benchmark_artifact": "Frozen reference outputs for reproducibility validation"
+  },
+  "export_format": {
+    "array_files": "NumPy .npy format, one file per product type",
+    "sidecar": "JSON sidecar (dataset.json) with shape, dtype, manifest, and frame metadata",
+    "manifest": "ProductManifest written to manifest.jsonl via ManifestWriter"
+  }
+}

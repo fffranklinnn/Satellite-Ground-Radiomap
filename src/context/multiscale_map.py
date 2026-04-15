@@ -25,6 +25,7 @@ from typing import Optional
 
 import numpy as np
 
+from .frame_context import FrameMismatchError
 from .grid_spec import GridSpec
 from .layer_states import EntryWaveState, TerrainState, UrbanRefinementState
 
@@ -105,8 +106,17 @@ class MultiScaleMap:
             MultiScaleMap with composite_db and per-layer contributions.
 
         Raises:
+            FrameMismatchError: If any state's frame_id does not match frame_id.
             ShapeError: If any layer array shape is incompatible with grid.
         """
+        # Validate frame_id consistency across all provided states
+        for state, label in ((entry, "entry"), (terrain, "terrain"), (urban, "urban")):
+            if state is not None and state.frame_id != frame_id:
+                raise FrameMismatchError(
+                    f"MultiScaleMap.compose: {label}.frame_id {state.frame_id!r} "
+                    f"!= frame_id {frame_id!r}"
+                )
+
         expected = (grid.ny, grid.nx)
         composite = np.zeros(expected, dtype=np.float32)
 

@@ -7,6 +7,7 @@ import pytest
 import numpy as np
 from datetime import datetime, timezone
 
+from src.context.frame_context import FrameMismatchError
 from src.context.grid_spec import GridSpec
 from src.context.layer_states import EntryWaveState, TerrainState, UrbanRefinementState
 from src.context.multiscale_map import MultiScaleMap, ShapeError
@@ -17,10 +18,10 @@ FRAME_ID = "test_frame"
 N = 256
 
 
-def _entry(total=153.5, el=45.0, az=180.0):
+def _entry(frame_id=FRAME_ID, total=153.5, el=45.0, az=180.0):
     ones = np.ones((N, N), dtype=np.float32)
     return EntryWaveState(
-        frame_id=FRAME_ID, grid=GRID,
+        frame_id=frame_id, grid=GRID,
         total_loss_db=ones * total,
         fspl_db=ones * 180.0, atm_db=ones * 2.0,
         iono_db=ones * 1.0, pol_db=ones * 0.5, gain_db=ones * 30.0,
@@ -71,7 +72,7 @@ class TestCompose:
 
     def test_composite_values_with_support_mask(self):
         """L3 residual applied only in top half (support_mask)."""
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, _entry(153.5), _terrain(20.0), _urban(15.0))
+        msm = MultiScaleMap.compose(FRAME_ID, GRID, _entry(total=153.5), _terrain(20.0), _urban(15.0))
         half = N // 2
         # Top half: l1 + l2 + l3
         np.testing.assert_allclose(msm.composite_db[:half, :], 153.5 + 20.0 + 15.0, atol=1e-4)
@@ -90,12 +91,12 @@ class TestCompose:
         np.testing.assert_allclose(msm.composite_db, 20.0, atol=1e-4)
 
     def test_no_l2(self):
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry=_entry(100.0), terrain=None)
+        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry=_entry(total=100.0), terrain=None)
         assert msm.l2_db is None
         np.testing.assert_allclose(msm.composite_db, 100.0, atol=1e-4)
 
     def test_no_l3(self):
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry=_entry(100.0), terrain=_terrain(10.0))
+        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry=_entry(total=100.0), terrain=_terrain(10.0))
         assert msm.l3_db is None
         assert msm.l3_support_mask is None
         np.testing.assert_allclose(msm.composite_db, 110.0, atol=1e-4)
@@ -123,12 +124,27 @@ class TestCompose:
             MultiScaleMap.compose(FRAME_ID, GRID, entry=bad_entry)
 
     def test_frame_id_preserved(self):
-        msm = MultiScaleMap.compose("my_frame", GRID, _entry())
+        msm = MultiScaleMap.compose("my_frame", GRID, _entry("my_frame"))
         assert msm.frame_id == "my_frame"
 
     def test_grid_preserved(self):
         msm = MultiScaleMap.compose(FRAME_ID, GRID, _entry())
         assert msm.grid is GRID
+
+    def test_frame_id_mismatch_raises(self):
+        """compose() must raise FrameMismatchError when state.frame_id != frame_id."""
+        wrong_entry = _entry("wrong_frame")
+        with pytest.raises(FrameMismatchError):
+            MultiScaleMap.compose(FRAME_ID, GRID, entry=wrong_entry)
+
+    def test_terrain_frame_id_mismatch_raises(self):
+        loss = np.zeros((N, N), dtype=np.float32)
+        wrong_terrain = TerrainState(
+            frame_id="wrong_frame", grid=GRID,
+            loss_db=loss, occlusion_mask=np.zeros((N, N), dtype=bool),
+        )
+        with pytest.raises(FrameMismatchError):
+            MultiScaleMap.compose(FRAME_ID, GRID, terrain=wrong_terrain)
 
 
 # ---------------------------------------------------------------------------

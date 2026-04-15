@@ -32,7 +32,7 @@ layers:
     grid_size: 256
     resolution_m: 100.0
     satellite_azimuth_deg: 180.0
-    satellite_elevation_deg: 45.0
+    satellite_elevation_deg: 15.0
   l3_urban:
     coverage_km: 0.256
     enabled: true

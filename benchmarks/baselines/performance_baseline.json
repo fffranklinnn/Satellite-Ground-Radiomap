@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "config_path": "benchmarks/golden_scenes_config.yaml",
+  "single_frame": {
+    "elapsed_s": 10.022,
+    "peak_memory_mb": 13.76,
+    "frame_time_utc": "2025-01-03T00:00:00+00:00"
+  },
+  "multi_frame": {
+    "n_frames": 4,
+    "total_elapsed_s": 31.828,
+    "per_frame_elapsed_s": 7.957,
+    "peak_memory_mb": 14.01
+  },
+  "notes": "Peak memory measured with tracemalloc (Python-level allocations only). NumPy/C-level allocations may not be fully captured. These baselines are pre-refactor; use for comparison after FrameContext introduction."
+}

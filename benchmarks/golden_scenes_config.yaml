@@ -60,7 +60,7 @@ layers:
     resolution_m: 100.0
     dem_file: "data/l2_topo/china_dem_30.tif"
     frequency_ghz: 14.5
-    satellite_elevation_deg: 45.0
+    satellite_elevation_deg: 15.0
     satellite_azimuth_deg: 180.0
 
   l3_urban:

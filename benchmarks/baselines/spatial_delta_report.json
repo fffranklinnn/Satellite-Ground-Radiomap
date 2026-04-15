@@ -1,0 +1,53 @@
+{
+  "schema_version": "1",
+  "description": "Documents the spatial coordinate mismatch between L2 (SW-corner origin) and L1/L3 (center origin). This is the expected output shift when the GridSpec fix is applied.",
+  "origin_used_in_golden_scenes": {
+    "lat": 34.3416,
+    "lon": 108.9398,
+    "location": "Xi'an, Shaanxi Province"
+  },
+  "l1_l3_interpretation": {
+    "anchor": "center",
+    "meaning": "origin_lat/origin_lon is the geographic center of the simulation grid",
+    "source": "src/core/grid.py:42-43"
+  },
+  "l2_current_interpretation": {
+    "anchor": "sw_corner",
+    "meaning": "origin_lat/origin_lon is the south-west corner of the 25.6 km DEM tile",
+    "source": "src/layers/l2_topo.py:129-130, src/layers/l2_topo.py:192-197"
+  },
+  "l2_coverage_km": 25.6,
+  "spatial_delta": {
+    "delta_lat_deg": 0.1153,
+    "delta_lon_deg": 0.1397,
+    "delta_lat_km": 12.8,
+    "delta_lon_km": 12.8,
+    "description": "After the GridSpec fix, L2 will interpret origin as center and shift its DEM window ~12.8 km north and ~12.8 km east relative to the current SW-corner interpretation.",
+    "l2_current_sw_corner": {"lat": 34.3416, "lon": 108.9398},
+    "l2_current_center": {"lat": 34.4569, "lon": 109.0795},
+    "l2_expected_center_after_fix": {"lat": 34.3416, "lon": 108.9398}
+  },
+  "aggregator_crop_issue": {
+    "description": "The aggregator hardcodes target_coverage_km=0.256 (L3 tile size). It crops L1 and L2 to the central 0.256 km before summation. This means the L2 contribution in the composite is always from the flat center of the 25.6 km tile, masking terrain variation.",
+    "source": "src/engine/aggregator.py:86",
+    "evidence": {
+      "l2_raw_25km_nonzero_pixels": 324,
+      "l2_raw_25km_max_loss_db": 50.26,
+      "l2_cropped_256m_nonzero_pixels": 0,
+      "l2_cropped_256m_max_loss_db": 0.02
+    }
+  },
+  "golden_scene_stats_pre_fix": {
+    "frame_time_utc": "2025-01-03T00:00:00+00:00",
+    "l1_only": {"min_db": 137.15, "max_db": 176.30, "shape": [256, 256]},
+    "l2_raw_25km": {"min_db": 0.0, "max_db": 50.26, "nonzero_pixels": 324, "shape": [256, 256]},
+    "l1l2_composite_256m": {"min_db": 137.58, "max_db": 137.60, "shape": [256, 256]},
+    "l1l2l3_composite_256m": {"min_db": 137.58, "max_db": 167.60, "shape": [256, 256]}
+  },
+  "expected_behavior_after_fix": {
+    "l2_anchor": "center (same as L1/L3)",
+    "l2_dem_window": "centered on origin_lat/origin_lon, extending 12.8 km in each direction",
+    "composite_l2_contribution": "non-zero terrain loss visible in the 256m crop when terrain variation exists near the center",
+    "output_shift": "L2 DEM window shifts ~12.8 km SW relative to current behavior; outputs are physically improved but numerically different (documented per DEC-1)"
+  }
+}

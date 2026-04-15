@@ -170,7 +170,7 @@ class TestProject:
 
 class TestExportDataset:
     def test_writes_npy_files(self, tmp_path, frame, entry, terrain, urban):
-        written = export_dataset(
+        written, _ = export_dataset(
             tmp_path, frame,
             product_types=["path_loss_map", "visibility_mask"],
             entry=entry, terrain=terrain, urban=urban,
@@ -225,7 +225,7 @@ class TestExportDataset:
             "path_loss_map", "visibility_mask", "elevation_field",
             "azimuth_field", "terrain_blockage", "urban_residual",
         ]
-        written = export_dataset(
+        written, _ = export_dataset(
             tmp_path, frame, all_types,
             entry=entry, terrain=terrain, urban=urban, multiscale=multiscale,
         )

@@ -105,3 +105,4 @@ docs/_templates/
 *.tmp
 *.bak
 .cache/
+.humanize*

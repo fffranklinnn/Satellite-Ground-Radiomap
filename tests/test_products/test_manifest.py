@@ -91,6 +91,41 @@ class TestProductManifest:
         with pytest.raises(TypeError):
             m.metadata["new_key"] = "value"
 
+    def test_nested_metadata_dict_is_immutable(self):
+        """Nested dicts inside metadata must also be read-only (deep freeze)."""
+        m = ProductManifest(
+            frame_id=FRAME_ID, timestamp_utc=TS_UTC,
+            config_hash="x", data_snapshot_id="y",
+            metadata={"nested": {"a": 1}},
+        )
+        with pytest.raises(TypeError):
+            m.metadata["nested"]["a"] = 99
+
+    def test_nested_metadata_list_is_immutable(self):
+        """Nested lists inside metadata must be converted to tuples (deep freeze)."""
+        m = ProductManifest(
+            frame_id=FRAME_ID, timestamp_utc=TS_UTC,
+            config_hash="x", data_snapshot_id="y",
+            metadata={"items": [1, 2, 3]},
+        )
+        assert isinstance(m.metadata["items"], tuple)
+        with pytest.raises(AttributeError):
+            m.metadata["items"].append(4)
+
+    def test_to_dict_nested_metadata_is_plain_dict(self):
+        """to_dict() must return plain dicts/lists, not MappingProxyType/tuple."""
+        m = ProductManifest(
+            frame_id=FRAME_ID, timestamp_utc=TS_UTC,
+            config_hash="x", data_snapshot_id="y",
+            metadata={"nested": {"a": 1}, "items": [1, 2]},
+        )
+        d = m.to_dict()
+        assert isinstance(d["metadata"], dict)
+        assert isinstance(d["metadata"]["nested"], dict)
+        assert isinstance(d["metadata"]["items"], list)
+        # Must be JSON-serializable
+        json.dumps(d)
+
 
 # ---------------------------------------------------------------------------
 # ProductManifest: JSON round-trip

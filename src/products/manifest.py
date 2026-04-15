@@ -38,6 +38,42 @@ def _sha256_dict(d: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _deep_freeze(obj: Any) -> Any:
+    """
+    Recursively convert mutable containers to immutable equivalents.
+
+    - dict  → MappingProxyType (recursively frozen values)
+    - list  → tuple (recursively frozen elements)
+    - tuple → tuple (recursively frozen elements)
+    - other → unchanged
+
+    This ensures that nested provenance payloads (e.g. metadata with nested
+    dicts) cannot be mutated after ProductManifest construction.
+    """
+    if isinstance(obj, dict):
+        return MappingProxyType({k: _deep_freeze(v) for k, v in obj.items()})
+    if isinstance(obj, (list, tuple)):
+        return tuple(_deep_freeze(v) for v in obj)
+    return obj
+
+
+def _deep_thaw(obj: Any) -> Any:
+    """
+    Recursively convert frozen containers back to plain mutable equivalents.
+
+    - MappingProxyType → dict (recursively thawed values)
+    - tuple            → list (recursively thawed elements)
+    - other            → unchanged
+
+    Used by ProductManifest.to_dict() to produce JSON-serializable output.
+    """
+    if isinstance(obj, MappingProxyType):
+        return {k: _deep_thaw(v) for k, v in obj.items()}
+    if isinstance(obj, tuple):
+        return [_deep_thaw(v) for v in obj]
+    return obj
+
+
 @dataclass(frozen=True)
 class ProductManifest:
     """
@@ -64,25 +100,12 @@ class ProductManifest:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Convert mutable containers to deeply immutable types:
-        # - dicts → MappingProxyType (read-only view, raises TypeError on mutation)
-        # - lists → tuple (immutable sequence)
-        object.__setattr__(
-            self, "input_file_hashes",
-            MappingProxyType(dict(self.input_file_hashes))
-        )
-        object.__setattr__(
-            self, "output_file_hashes",
-            MappingProxyType(dict(self.output_file_hashes))
-        )
-        object.__setattr__(
-            self, "fallbacks_used",
-            tuple(self.fallbacks_used)
-        )
-        object.__setattr__(
-            self, "metadata",
-            MappingProxyType(dict(self.metadata))
-        )
+        # Recursively freeze all container fields so nested provenance payloads
+        # (e.g. metadata with nested dicts) cannot be mutated after construction.
+        object.__setattr__(self, "input_file_hashes", _deep_freeze(dict(self.input_file_hashes)))
+        object.__setattr__(self, "output_file_hashes", _deep_freeze(dict(self.output_file_hashes)))
+        object.__setattr__(self, "fallbacks_used", tuple(self.fallbacks_used))
+        object.__setattr__(self, "metadata", _deep_freeze(dict(self.metadata)))
 
     # ------------------------------------------------------------------
     # Serialization
@@ -95,10 +118,10 @@ class ProductManifest:
             "timestamp_utc": self.timestamp_utc,
             "config_hash": self.config_hash,
             "data_snapshot_id": self.data_snapshot_id,
-            "input_file_hashes": dict(self.input_file_hashes),
-            "output_file_hashes": dict(self.output_file_hashes),
+            "input_file_hashes": _deep_thaw(self.input_file_hashes),
+            "output_file_hashes": _deep_thaw(self.output_file_hashes),
             "fallbacks_used": list(self.fallbacks_used),
-            "metadata": dict(self.metadata),
+            "metadata": _deep_thaw(self.metadata),
         }
 
     def to_json(self, indent: Optional[int] = None) -> str:

@@ -27,7 +27,9 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import require_utc
+from src.products.manifest import ProductManifest
 from src.products.projectors import export_dataset
+from src.pipeline.manifest_writer import ManifestWriter
 from src.utils import setup_logger, SimulationLogger, plot_radio_map, plot_layer_comparison
 from src.utils import get_profiler
 from src.utils.data_validation import (
@@ -148,10 +150,16 @@ def run_simulation(config: dict, output_dir: Path):
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir}")
 
+    # Build a data_snapshot_id from config hash for provenance tracking
+    from src.products.manifest import _sha256_dict as _cfg_hash
+    data_snapshot_id = config.get('data_validation', {}).get('snapshot_id', '')
+
     current_time = start_time
     frame_count  = 0
 
-    while current_time <= end_time:
+    manifest_path = output_dir / "manifest.jsonl"
+    with ManifestWriter(manifest_path) as manifest_writer:
+      while current_time <= end_time:
         logger.info(f"\n{'='*60}")
         logger.info(f"Processing timestamp: {current_time.isoformat()}")
         logger.info(f"{'='*60}")
@@ -161,10 +169,17 @@ def run_simulation(config: dict, output_dir: Path):
         # Build frame — sat_info populated by L1 internally during propagate_entry
         frame = frame_builder.build(current_time)
 
+        # Clear per-frame fallback accumulator before propagation
+        if l1_layer is not None:
+            l1_layer.clear_fallbacks()
+
         # Typed state propagation
         entry   = l1_layer.propagate_entry(frame)   if l1_layer  else None
         terrain = l2_layer.propagate_terrain(frame, entry=entry) if l2_layer else None
         urban   = l3_layer.refine_urban(frame, entry=entry)      if l3_layer else None
+
+        # Collect fallbacks recorded during this frame's propagation
+        frame_fallbacks = l1_layer.fallbacks_used if l1_layer is not None else []
 
         # Assemble composite map via MultiScaleMap.compose() (masked residual compositor)
         msm = MultiScaleMap.compose(
@@ -217,12 +232,21 @@ def run_simulation(config: dict, output_dir: Path):
                            title=f"Composite Radio Map - {current_time.isoformat()}",
                            output_file=str(output_dir / f"composite_{frame_count:04d}.png"),
                            dpi=config['output']['dpi'])
-            written = export_dataset(
+            frame_manifest = ProductManifest.build(
+                frame_id=frame.frame_id,
+                timestamp_utc=frame.timestamp.isoformat(),
+                config=config,
+                data_snapshot_id=data_snapshot_id,
+                fallbacks_used=frame_fallbacks,
+            )
+            written, _ = export_dataset(
                 output_dir=output_dir,
                 frame=frame,
                 product_types=["path_loss_map"],
                 multiscale=msm,
+                manifest=frame_manifest,
                 prefix=f"composite_{frame_count:04d}_",
+                manifest_writer=manifest_writer,
             )
             logger.info(f"Saved composite map to {written['path_loss_map']}")
 

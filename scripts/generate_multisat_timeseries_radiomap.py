@@ -35,6 +35,9 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import parse_iso_utc  # shared strict UTC helper
+from src.products.manifest import ProductManifest
+from src.products.projectors import export_dataset
+from src.pipeline.manifest_writer import ManifestWriter
 from src.utils import plot_radio_map
 
 
@@ -404,7 +407,7 @@ def main() -> None:
         run_t0 = time.time()
         status_counts: Dict[str, int] = {}
 
-        with out_dirs["manifest"].open("w", encoding="utf-8") as manifest_f:
+        with ManifestWriter(out_dirs["manifest"]) as manifest_writer:
             for frame_idx, (ts, visible) in enumerate(zip(timestamps, visible_plan)):
                 frame_t0 = time.time()
                 stamp = frame_stamp(ts)
@@ -423,6 +426,7 @@ def main() -> None:
                 sat_entries: List[Dict[str, Any]] = []
                 sat_errors: List[Dict[str, Any]] = []
                 status = "ok"
+                l1_layer.clear_fallbacks()
 
                 target_size = frame_builder.grid.nx
                 default_l1 = np.full((target_size, target_size), l1_layer.NO_COVERAGE_LOSS_DB, dtype=np.float32)
@@ -538,11 +542,35 @@ def main() -> None:
                                 float(pwr / total_power) if total_power > 0.0 else 0.0
                             )
 
-                npy_path = out_dirs["npy"] / f"{base}.npy"
                 png_path = out_dirs["png"] / f"{base}.png"
                 frame_json_path = out_dirs["json"] / f"{base}.json"
 
-                np.save(npy_path, composite.astype(np.float32, copy=False))
+                # Build per-frame manifest and export npy via export_dataset()
+                frame_manifest = ProductManifest.build(
+                    frame_id=base,
+                    timestamp_utc=ts.isoformat(),
+                    config=config,
+                    data_snapshot_id=config.get("data_validation", {}).get("snapshot_id", ""),
+                    fallbacks_used=l1_layer.fallbacks_used,
+                )
+                written, _ = export_dataset(
+                    output_dir=out_dirs["npy"],
+                    frame=frame_builder.build(ts, frame_id=base),
+                    product_types=["path_loss_map"],
+                    multiscale=MultiScaleMap(
+                        frame_id=base,
+                        grid=frame_builder.grid,
+                        composite_db=composite,
+                        l1_db=l1_fused,
+                        l2_db=l2_fused,
+                        l3_db=l3_fused,
+                    ),
+                    manifest=frame_manifest,
+                    prefix=f"{base}_",
+                    manifest_writer=manifest_writer,
+                )
+                npy_path = Path(written["path_loss_map"])
+                npy_rel = npy_path.relative_to(out_root)
 
                 plot_radio_map(
                     loss_map=composite,
@@ -596,20 +624,6 @@ def main() -> None:
                     json.dumps(frame_meta, ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
-
-                manifest_row = {
-                    "frame_index": int(frame_idx),
-                    "timestamp_utc": ts.isoformat(),
-                    "status": status,
-                    "fusion_mode": args.fusion_mode,
-                    "satellite_count_used": int(len(sat_entries)),
-                    "composite_mean_db": frame_meta["layer_stats_db"]["composite"]["mean"],
-                    "png": str(png_rel),
-                    "npy": str(npy_rel),
-                    "frame_json": str(json_rel),
-                }
-                manifest_f.write(json.dumps(manifest_row, ensure_ascii=False) + "\n")
-                manifest_f.flush()
 
                 status_counts[status] = status_counts.get(status, 0) + 1
                 done_frames = frame_idx + 1

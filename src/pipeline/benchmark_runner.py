@@ -121,7 +121,7 @@ class BenchmarkRunner:
             data_snapshot_id=self.data_snapshot_id,
         )
 
-        export_dataset(
+        _, output_manifest = export_dataset(
             output_dir=output_dir,
             frame=frame,
             product_types=product_types,
@@ -134,7 +134,9 @@ class BenchmarkRunner:
             manifest_writer=manifest_writer,
         )
 
-        return manifest
+        # Return the post-export manifest (with output_file_hashes) if available,
+        # otherwise return the pre-export manifest (no manifest_writer provided).
+        return output_manifest if output_manifest is not None else manifest
 
     def run(
         self,

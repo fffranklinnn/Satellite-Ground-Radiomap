@@ -9,9 +9,10 @@ import numpy as np
 import pytest
 
 from src.layers.l1_macro import L1MacroLayer
+from src.context import GridSpec, FrameBuilder
 
 ROOT = Path(__file__).resolve().parents[2]
-TLE_PATH = ROOT / "data" / "2025_0101.tle"
+TLE_PATH = ROOT / "data" / "starlink-2025-tle" / "2025-01-03.tle"
 IONEX_PATH = ROOT / "data" / "l1_space" / "data" / "UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
 
 BASE_CONFIG = {
@@ -127,3 +128,66 @@ def test_l1_initialization_with_ionex_when_available():
     cfg = {**BASE_CONFIG, "ionex_file": str(IONEX_PATH)}
     layer = L1MacroLayer(cfg, origin_lat=39.9042, origin_lon=116.4074)
     assert layer.ionex is not None
+
+
+def test_l1_fallbacks_used_empty_on_init():
+    """fallbacks_used must be empty after initialization with valid data."""
+    layer = L1MacroLayer(BASE_CONFIG, origin_lat=39.9, origin_lon=116.4)
+    assert layer.fallbacks_used == []
+
+
+def test_l1_fallbacks_used_records_missing_ionex(tmp_path):
+    """fallbacks_used must record a fallback when IONEX file is missing."""
+    cfg = {**BASE_CONFIG, "ionex_file": str(tmp_path / "nonexistent.INX")}
+    layer = L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+    assert any("IONEX" in fb for fb in layer.fallbacks_used)
+
+
+def test_l1_clear_fallbacks_resets_list(tmp_path):
+    """clear_fallbacks() must reset the fallback list to empty."""
+    cfg = {**BASE_CONFIG, "ionex_file": str(tmp_path / "nonexistent.INX")}
+    layer = L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+    assert len(layer.fallbacks_used) > 0
+    layer.clear_fallbacks()
+    assert layer.fallbacks_used == []
+
+
+def test_l1_fallbacks_used_returns_copy():
+    """fallbacks_used must return a copy, not the internal list."""
+    layer = L1MacroLayer(BASE_CONFIG, origin_lat=39.9, origin_lon=116.4)
+    fb1 = layer.fallbacks_used
+    fb1.append("injected")
+    assert "injected" not in layer.fallbacks_used
+
+
+def test_l1_propagate_entry_component_decomposition():
+    """
+    total_loss_db == fspl_db + atm_db + iono_db + pol_db - gain_db
+    for all non-occluded pixels (task23 AC-5 integration assertion).
+    """
+    layer = L1MacroLayer(BASE_CONFIG, origin_lat=39.9, origin_lon=116.4)
+    # Use the same grid_size as BASE_CONFIG so shapes match
+    grid = GridSpec.from_legacy_args(39.9, 116.4, 256.0, 256, 256)
+    fb = FrameBuilder(grid=grid)
+    frame = fb.build(datetime(2025, 1, 1, 6, 0, 0, tzinfo=timezone.utc))
+
+    entry = layer.propagate_entry(frame)
+
+    # Only check pixels that are not occluded (valid coverage)
+    valid = ~entry.occlusion_mask
+    if not valid.any():
+        pytest.skip("No visible satellite pixels at this timestamp/location.")
+
+    reconstructed = (
+        entry.fspl_db[valid]
+        + entry.atm_db[valid]
+        + entry.iono_db[valid]
+        + entry.pol_db[valid]
+        - entry.gain_db[valid]
+    )
+    np.testing.assert_allclose(
+        entry.total_loss_db[valid],
+        reconstructed,
+        atol=1e-3,
+        err_msg="total_loss_db != fspl + atm + iono + pol - gain for non-occluded pixels",
+    )

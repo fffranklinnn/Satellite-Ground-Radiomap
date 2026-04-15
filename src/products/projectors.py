@@ -137,8 +137,8 @@ def export_dataset(
     multiscale: Optional[MultiScaleMap] = None,
     manifest: Optional[ProductManifest] = None,
     prefix: str = "",
-    manifest_writer: Optional[ManifestWriter] = None,
-) -> Dict[str, str]:
+    manifest_writer: Optional["ManifestWriter"] = None,
+) -> tuple:
     """
     Export a set of product arrays to NPY files with a JSON sidecar.
 
@@ -166,7 +166,10 @@ def export_dataset(
         manifest_writer:  ManifestWriter to append the output manifest record.
 
     Returns:
-        Dict mapping product_type -> absolute file path (str).
+        Tuple of (written, output_manifest) where:
+          - written: Dict mapping product_type -> absolute file path (str).
+          - output_manifest: The augmented ProductManifest with output_file_hashes
+            (None if manifest_writer was not provided).
 
     Raises:
         UnknownProductTypeError: If any product_type is not recognized.
@@ -197,11 +200,13 @@ def export_dataset(
             "dtype": str(arr.dtype),
         }
 
+    output_manifest: Optional[ProductManifest] = None
+
     # Build output manifest with file hashes if a writer is provided
     if manifest_writer is not None:
+        from ..pipeline.manifest_writer import ManifestWriter as _MW  # lazy import
         output_hashes = {pt: _sha256_file(written[pt]) for pt in written}
         if manifest is not None:
-            # Augment existing manifest with output hashes
             output_manifest = ProductManifest(
                 frame_id=manifest.frame_id,
                 timestamp_utc=manifest.timestamp_utc,
@@ -230,4 +235,4 @@ def export_dataset(
         json.dumps(sidecar, indent=2, ensure_ascii=True), encoding="utf-8"
     )
 
-    return written
+    return written, output_manifest

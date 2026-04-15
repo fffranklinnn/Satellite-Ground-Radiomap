@@ -197,6 +197,7 @@ class L1MacroLayer(BaseLayer):
         self.faraday_linear_only = bool(iono_cfg.get("faraday_linear_only", True))
         self.fallback_b_t = float(iono_cfg.get("fallback_b_t", 45e-6))
         self.strict_data = bool(self.cfg.get("strict_data", self.cfg.get("strict_mode", False)))
+        self._fallbacks_used: List[str] = []
         self._geomag_backend = "uninitialized"
         self._geomag_model = None
 
@@ -230,10 +231,12 @@ class L1MacroLayer(BaseLayer):
                 except Exception as exc:
                     if self.strict_data:
                         raise RuntimeError(f"[L1] strict_data: failed to load IONEX ({ionex_path}): {exc}") from exc
+                    self._fallbacks_used.append(f"L1: IONEX load failed ({exc}); using default TEC={self.default_tec:.1f}")
                     print(f"[L1] IONEX unavailable ({exc}); using fallback TEC={self.default_tec:.1f}.")
             else:
                 if self.strict_data:
                     raise FileNotFoundError(f"[L1] strict_data: IONEX file not found: {ionex_path}")
+                self._fallbacks_used.append(f"L1: IONEX file not found ({ionex_path}); using default TEC={self.default_tec:.1f}")
                 print(f"[L1] IONEX file not found: {ionex_path}; using fallback TEC={self.default_tec:.1f}.")
 
         self.era5 = None
@@ -246,6 +249,7 @@ class L1MacroLayer(BaseLayer):
             else:
                 if self.strict_data:
                     raise RuntimeError(f"[L1] strict_data: ERA5 unavailable or unreadable: {era5_path}")
+                self._fallbacks_used.append(f"L1: ERA5 unavailable ({era5_path}); using simplified atmospheric model")
                 print("[L1] ERA5 unavailable; using simplified atmospheric model.")
 
         self.ts = load.timescale()
@@ -308,6 +312,15 @@ class L1MacroLayer(BaseLayer):
               f"{self.freq_hz/1e9:.2f} GHz | "
               f"peak {self.peak_gain_db:.2f} dBi | "
               f"HPBW az={self.hpbw_az_deg:.2f}deg el={self.hpbw_el_deg:.2f}deg")
+
+    @property
+    def fallbacks_used(self) -> List[str]:
+        """Return fallback descriptions recorded since last clear_fallbacks() call."""
+        return list(self._fallbacks_used)
+
+    def clear_fallbacks(self) -> None:
+        """Clear the accumulated fallback list (call before each frame if needed)."""
+        self._fallbacks_used = []
 
     def set_time(self, dt: datetime):
         """Set simulation time."""
@@ -427,6 +440,7 @@ class L1MacroLayer(BaseLayer):
             except Exception as exc:
                 if self.strict_data:
                     raise RuntimeError(f"[L1] strict_data: IONEX query failed at {sim_dt.isoformat()}: {exc}") from exc
+                self._fallbacks_used.append(f"L1: IONEX query failed at {sim_dt.isoformat()} ({exc}); using default TEC={self.default_tec:.1f}")
                 print(f"[L1] IONEX query failed ({exc}); fallback TEC={self.default_tec:.1f}.")
                 tec_vtec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
                 tec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
@@ -466,6 +480,7 @@ class L1MacroLayer(BaseLayer):
             except Exception as exc:
                 if self.strict_data:
                     raise RuntimeError(f"[L1] strict_data: ERA5 query failed at {sim_dt.isoformat()}: {exc}") from exc
+                self._fallbacks_used.append(f"L1: ERA5 query failed at {sim_dt.isoformat()} ({exc}); using simplified atmospheric model")
                 print(f"[L1] ERA5 query failed ({exc}); fallback simplified atmospheric model.")
                 iwv_map = np.full_like(lat_grid, np.nan, dtype=np.float32)
                 atm_db = atmospheric_loss(elevation_deg, self.frequency_ghz, rain_rate_mm_h)

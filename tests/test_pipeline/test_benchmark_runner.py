@@ -252,6 +252,52 @@ class TestReproducibility:
         assert m1.config_hash == m2.config_hash
         assert m1.data_snapshot_id == m2.data_snapshot_id
 
+    def _run_with_writer(self, frame_id: str, output_dir: Path):
+        """Run with a ManifestWriter and return (manifest, manifest_path)."""
+        l1, l2, l3 = _make_mock_layers(frame_id)
+        fb = _make_frame_builder()
+        runner = BenchmarkRunner(
+            frame_builder=fb, l1_layer=l1, l2_layer=l2, l3_layer=l3,
+            config=CONFIG, data_snapshot_id=SNAPSHOT_ID,
+        )
+        frame = FrameContext(frame_id=frame_id, timestamp=TS_UTC, grid=GRID)
+        manifest_path = output_dir / "manifest.jsonl"
+        with ManifestWriter(manifest_path) as writer:
+            with patch.object(runner.frame_builder, "build", return_value=frame):
+                manifest = runner.run_frame(
+                    TS_UTC, output_dir, ["path_loss_map"],
+                    prefix="repro_", manifest_writer=writer,
+                )
+        return manifest, manifest_path
+
+    def test_output_file_hashes_populated(self, tmp_path):
+        """run_frame with ManifestWriter must return manifest with output_file_hashes."""
+        manifest, _ = self._run_with_writer("hash_frame2", tmp_path)
+        assert "path_loss_map" in manifest.output_file_hashes
+        assert len(manifest.output_file_hashes["path_loss_map"]) == 64  # SHA-256 hex
+
+    def test_output_hashes_stable_across_runs(self, tmp_path):
+        """Two identical runs must produce identical output_file_hashes."""
+        m1, _ = self._run_with_writer("stable_frame", tmp_path / "r1")
+        m2, _ = self._run_with_writer("stable_frame", tmp_path / "r2")
+        assert m1.output_file_hashes == m2.output_file_hashes
+
+    def test_manifest_equality_across_runs(self, tmp_path):
+        """Two identical runs must produce equal manifests (config_hash, data_snapshot_id, output_hashes)."""
+        m1, _ = self._run_with_writer("eq_frame", tmp_path / "r1")
+        m2, _ = self._run_with_writer("eq_frame", tmp_path / "r2")
+        assert m1.config_hash == m2.config_hash
+        assert m1.data_snapshot_id == m2.data_snapshot_id
+        assert m1.output_file_hashes == m2.output_file_hashes
+
+    def test_jsonl_contains_output_hashes(self, tmp_path):
+        """JSONL manifest must contain output_file_hashes for the written frame."""
+        _, manifest_path = self._run_with_writer("jsonl_frame", tmp_path)
+        line = manifest_path.read_text().strip()
+        parsed = json.loads(line)
+        assert "output_file_hashes" in parsed
+        assert "path_loss_map" in parsed["output_file_hashes"]
+
 
 # ---------------------------------------------------------------------------
 # BenchmarkRunner.run: multi-frame list
@@ -337,3 +383,32 @@ class TestBenchmarkRunnerMultiFrame:
             product_types=["path_loss_map"],
         )
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# Regression report schema (task26 / AC-8)
+# ---------------------------------------------------------------------------
+
+class TestRegressionReportSchema:
+    """Verify the regression report artifact has the required schema."""
+
+    REPORT_PATH = Path("benchmarks/baselines/regression_report.json")
+
+    def test_regression_report_exists(self):
+        """benchmarks/baselines/regression_report.json must exist."""
+        assert self.REPORT_PATH.exists(), (
+            f"Regression report not found at {self.REPORT_PATH}. "
+            "Run benchmarks/run_regression.py to generate it."
+        )
+
+    def test_regression_report_schema(self):
+        """Regression report must have required top-level fields."""
+        if not self.REPORT_PATH.exists():
+            pytest.skip("Regression report not yet generated.")
+        report = json.loads(self.REPORT_PATH.read_text())
+        assert "schema_version" in report
+        assert "array_comparisons" in report
+        assert "manifest_checks" in report
+        assert isinstance(report["array_comparisons"], list)
+        assert isinstance(report["manifest_checks"], list)
+

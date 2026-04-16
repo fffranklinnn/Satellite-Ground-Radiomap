@@ -6,6 +6,9 @@ Saves L1-only, L1+L2, and L1+L2+L3 frame outputs with serialized arrays,
 a deterministic manifest (no volatile fields), frame list, output file hashes,
 fallback log, and satellite metadata.
 
+Uses the FrameBuilder/BenchmarkRunner pipeline (not the legacy RadioMapAggregator)
+so golden arrays are consistent with what run_regression.py produces.
+
 Usage:
     python benchmarks/capture_golden_scenes.py [--config CONFIG] [--output OUTPUT_DIR]
 """
@@ -24,9 +27,10 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.context import GridSpec, FrameBuilder
 from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
-from src.engine import RadioMapAggregator
-from src.layers.base import LayerContext
+from src.context.multiscale_map import MultiScaleMap
+from src.context.time_utils import parse_iso_utc
 
 
 def _sha256(path: Path) -> str:
@@ -82,24 +86,32 @@ def capture(config_path: str, output_dir: Path) -> None:
 
     # Use the first time step; store as explicit UTC string
     raw_time = config["time"]["start"]
-    # Treat as UTC (naive strings in config are documented as UTC)
-    frame_dt = datetime.fromisoformat(raw_time).replace(tzinfo=timezone.utc)
+    frame_dt = parse_iso_utc(raw_time, strict=False)
     frame_time_utc = frame_dt.isoformat()
 
-    # Build LayerContext for L3 incident direction
+    # Build FrameBuilder from config
+    l1_cfg = config["layers"]["l1_macro"]
+    l2_cfg = config["layers"]["l2_topo"]
     l3_cfg = config["layers"].get("l3_urban", {})
-    incident_dir_cfg = l3_cfg.get("incident_dir")
-    context = LayerContext.from_any({"incident_dir": incident_dir_cfg}) if incident_dir_cfg else None
+    coarse_km = float(l1_cfg.get("coverage_km", 256.0))
+    grid_size = int(l1_cfg.get("grid_size", 256))
+    grid = GridSpec.from_legacy_args(origin_lat, origin_lon, coarse_km, grid_size, grid_size)
+    fb = FrameBuilder(grid=grid)
 
     # Attach fallback tracker to root logger
     tracker = _FallbackTracker()
     logging.getLogger().addHandler(tracker)
 
+    # Build a single frame (same satellite selection for all scenes)
+    frame = fb.build(frame_dt)
+
     # --- L1 only ---
     print("Capturing L1-only scene...")
-    l1_cfg = config["layers"]["l1_macro"]
     l1 = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
-    l1_map = l1.compute(origin_lat, origin_lon, frame_dt, context)
+    entry = l1.propagate_entry(frame)
+    msm_l1 = MultiScaleMap.compose(frame_id=frame.frame_id, grid=frame.grid,
+                                    entry=entry, terrain=None, urban=None)
+    l1_map = msm_l1.composite_db
     np.save(output_dir / "l1_only.npy", l1_map)
 
     # Extract satellite metadata from L1 internals
@@ -107,32 +119,38 @@ def capture(config_path: str, output_dir: Path) -> None:
     if hasattr(l1, "_last_sat_meta"):
         sat_meta = l1._last_sat_meta or {}
 
-    # --- L2 standalone (raw, not cropped by aggregator) ---
+    # --- L2 standalone (raw terrain loss) ---
     print("Capturing L2 standalone scene...")
-    l2_cfg = config["layers"]["l2_topo"]
     l2 = L2TopoLayer(l2_cfg, origin_lat, origin_lon)
-    l2_raw = l2.compute(origin_lat, origin_lon, frame_dt, context)
+    terrain = l2.propagate_terrain(frame, entry=entry)
+    l2_raw = terrain.loss_db
     np.save(output_dir / "l2_raw.npy", l2_raw)
 
-    # --- L1 + L2 via aggregator ---
+    # --- L1 + L2 composite ---
     print("Capturing L1+L2 scene...")
-    agg_l1l2 = RadioMapAggregator(l1, l2, None)
-    contrib_l1l2 = agg_l1l2.get_layer_contributions(origin_lat, origin_lon, frame_dt, context)
-    composite_l1l2 = contrib_l1l2["composite"]
+    msm_l1l2 = MultiScaleMap.compose(frame_id=frame.frame_id, grid=frame.grid,
+                                      entry=entry, terrain=terrain, urban=None)
+    composite_l1l2 = msm_l1l2.composite_db
     np.save(output_dir / "l1l2_composite.npy", composite_l1l2)
-    np.save(output_dir / "l1l2_l1.npy", contrib_l1l2.get("l1", np.zeros((256, 256), dtype=np.float32)))
-    np.save(output_dir / "l1l2_l2.npy", contrib_l1l2.get("l2", np.zeros((256, 256), dtype=np.float32)))
+    np.save(output_dir / "l1l2_l1.npy", msm_l1l2.l1_db if msm_l1l2.l1_db is not None
+            else np.zeros((256, 256), dtype=np.float32))
+    np.save(output_dir / "l1l2_l2.npy", msm_l1l2.l2_db if msm_l1l2.l2_db is not None
+            else np.zeros((256, 256), dtype=np.float32))
 
-    # --- L1 + L2 + L3 via aggregator ---
+    # --- L1 + L2 + L3 composite ---
     print("Capturing L1+L2+L3 scene...")
     l3 = L3UrbanLayer(l3_cfg, origin_lat, origin_lon)
-    agg_full = RadioMapAggregator(l1, l2, l3)
-    contrib_full = agg_full.get_layer_contributions(origin_lat, origin_lon, frame_dt, context)
-    composite_full = contrib_full["composite"]
+    urban = l3.refine_urban(frame, entry=entry)
+    msm_full = MultiScaleMap.compose(frame_id=frame.frame_id, grid=frame.grid,
+                                      entry=entry, terrain=terrain, urban=urban)
+    composite_full = msm_full.composite_db
     np.save(output_dir / "l1l2l3_composite.npy", composite_full)
-    np.save(output_dir / "l1l2l3_l1.npy", contrib_full.get("l1", np.zeros((256, 256), dtype=np.float32)))
-    np.save(output_dir / "l1l2l3_l2.npy", contrib_full.get("l2", np.zeros((256, 256), dtype=np.float32)))
-    np.save(output_dir / "l1l2l3_l3.npy", contrib_full.get("l3", np.zeros((256, 256), dtype=np.float32)))
+    np.save(output_dir / "l1l2l3_l1.npy", msm_full.l1_db if msm_full.l1_db is not None
+            else np.zeros((256, 256), dtype=np.float32))
+    np.save(output_dir / "l1l2l3_l2.npy", msm_full.l2_db if msm_full.l2_db is not None
+            else np.zeros((256, 256), dtype=np.float32))
+    np.save(output_dir / "l1l2l3_l3.npy", msm_full.l3_db if msm_full.l3_db is not None
+            else np.zeros((256, 256), dtype=np.float32))
 
     logging.getLogger().removeHandler(tracker)
 
@@ -202,10 +220,13 @@ def capture(config_path: str, output_dir: Path) -> None:
             "l1_only": _stats(l1_map),
             "l2_raw": _stats(l2_raw),
             "l1l2_composite": _stats(composite_l1l2),
-            "l1l2_l2_cropped": _stats(contrib_l1l2.get("l2", np.zeros((256, 256), dtype=np.float32))),
+            "l1l2_l2_cropped": _stats(msm_l1l2.l2_db if msm_l1l2.l2_db is not None
+                                       else np.zeros((256, 256), dtype=np.float32)),
             "l1l2l3_composite": _stats(composite_full),
-            "l1l2l3_l2_cropped": _stats(contrib_full.get("l2", np.zeros((256, 256), dtype=np.float32))),
-            "l1l2l3_l3": _stats(contrib_full.get("l3", np.zeros((256, 256), dtype=np.float32))),
+            "l1l2l3_l2_cropped": _stats(msm_full.l2_db if msm_full.l2_db is not None
+                                         else np.zeros((256, 256), dtype=np.float32)),
+            "l1l2l3_l3": _stats(msm_full.l3_db if msm_full.l3_db is not None
+                                 else np.zeros((256, 256), dtype=np.float32)),
         },
         "spatial_delta": spatial_delta,
     }
@@ -232,8 +253,8 @@ def capture(config_path: str, output_dir: Path) -> None:
     print(f"  L1+L2 composite: {_stats(composite_l1l2)['min_db']:.2f}~{_stats(composite_l1l2)['max_db']:.2f} dB")
     print(f"  L1+L2+L3:        {_stats(composite_full)['min_db']:.2f}~{_stats(composite_full)['max_db']:.2f} dB")
     print(f"\nFallbacks recorded: {len(tracker.records)}")
-    for fb in tracker.records:
-        print(f"  - {fb}")
+    for fallback_msg in tracker.records:
+        print(f"  - {fallback_msg}")
     print(f"\nSpatial delta (L2 SW-corner bug):")
     print(f"  SW corner = ({origin_lat:.4f}N, {origin_lon:.4f}E)")
     print(f"  Center after fix = ({origin_lat + delta_lat_deg:.4f}N, {origin_lon + delta_lon_deg:.4f}E)")

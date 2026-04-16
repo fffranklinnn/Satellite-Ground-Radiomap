@@ -498,3 +498,54 @@ class TestInputFileHashes:
         assert "tle_file" in manifest.input_file_hashes
         assert len(manifest.input_file_hashes["tle_file"]) == 64
 
+
+    def test_collect_input_file_paths_extracts_tile_cache_root(self, tmp_path):
+        """collect_input_file_paths uses tile_cache_root key from l3_urban config."""
+        cache = tmp_path / "tiles"
+        cache.mkdir()
+        cfg = {"layers": {"l3_urban": {"tile_cache_root": str(cache)}}}
+        paths = collect_input_file_paths(cfg)
+        assert "tile_cache_root" in paths
+        assert paths["tile_cache_root"] == str(cache)
+
+    def test_collect_input_file_paths_real_benchmark_config(self):
+        """collect_input_file_paths extracts tile_cache_root from the real benchmark config."""
+        import yaml
+        cfg_path = Path(__file__).resolve().parents[2] / "benchmarks" / "golden_scenes_config.yaml"
+        if not cfg_path.exists():
+            pytest.skip("Benchmark config not found.")
+        with open(cfg_path) as f:
+            cfg = yaml.safe_load(f)
+        paths = collect_input_file_paths(cfg)
+        # tile_cache_root should be present (even if the directory doesn't exist on this machine)
+        assert "tile_cache_root" in paths
+
+    def test_directory_input_hash_non_empty_and_stable(self, tmp_path):
+        """Directory-backed input produces non-empty, stable hash."""
+        from src.products.manifest import _sha256_dir
+        d = tmp_path / "cache"
+        d.mkdir()
+        (d / "tile_001" ).mkdir()
+        (d / "tile_001" / "H.npy").write_bytes(b"height data")
+        h1 = _sha256_dir(str(d))
+        h2 = _sha256_dir(str(d))
+        assert h1 != ""
+        assert len(h1) == 64
+        assert h1 == h2
+
+    def test_directory_input_hash_via_manifest_build(self, tmp_path):
+        """ProductManifest.build with a directory input produces non-empty hash."""
+        d = tmp_path / "tiles"
+        d.mkdir()
+        (d / "t1").mkdir()
+        (d / "t1" / "H.npy").write_bytes(b"data")
+        manifest = ProductManifest.build(
+            frame_id="f1",
+            timestamp_utc="2025-01-03T00:00:00+00:00",
+            config={},
+            input_files={"tile_cache_root": str(d)},
+            hash_files=True,
+        )
+        h = manifest.input_file_hashes["tile_cache_root"]
+        assert h != "", "Directory-backed input hash must not be empty"
+        assert len(h) == 64

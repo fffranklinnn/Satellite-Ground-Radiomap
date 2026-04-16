@@ -30,28 +30,28 @@
       "sha256": "917acd1090190539931ed7bc51f73e9c6f17f6dd9cf2b7cb628760a6b0d832ff"
     },
     "l2_raw.npy": {
-      "sha256": "b0076dc57e55eb7adb3435bb4be60aea056b7cb235f35eec649c599ec6c8e368"
+      "sha256": "010fa1d696ebebcaa38ee3721888d36faab2e58d0d443a96430ee9d6f9d5ca7b"
     },
     "l1l2_composite.npy": {
-      "sha256": "87067781c86ad525f8d107ad4f4cba688dd6440a537f4836f26c44ecedc364da"
+      "sha256": "917acd1090190539931ed7bc51f73e9c6f17f6dd9cf2b7cb628760a6b0d832ff"
     },
     "l1l2_l1.npy": {
-      "sha256": "87067781c86ad525f8d107ad4f4cba688dd6440a537f4836f26c44ecedc364da"
+      "sha256": "917acd1090190539931ed7bc51f73e9c6f17f6dd9cf2b7cb628760a6b0d832ff"
     },
     "l1l2_l2.npy": {
       "sha256": "010fa1d696ebebcaa38ee3721888d36faab2e58d0d443a96430ee9d6f9d5ca7b"
     },
     "l1l2l3_composite.npy": {
-      "sha256": "9070368e43c751097eecd8e6087c85bd8a09f0c67e807b557a9771cfbef7eb8e"
+      "sha256": "ba6912c6b9c8b1bbecfba936f0d1cac90e542794e2c762d0ae905cee2f6e12a5"
     },
     "l1l2l3_l1.npy": {
-      "sha256": "87067781c86ad525f8d107ad4f4cba688dd6440a537f4836f26c44ecedc364da"
+      "sha256": "917acd1090190539931ed7bc51f73e9c6f17f6dd9cf2b7cb628760a6b0d832ff"
     },
     "l1l2l3_l2.npy": {
       "sha256": "010fa1d696ebebcaa38ee3721888d36faab2e58d0d443a96430ee9d6f9d5ca7b"
     },
     "l1l2l3_l3.npy": {
-      "sha256": "53d0d3a0cec582c7ef3a26c0434514cac9cd391f0c47b5090716d7fa1196ad3c"
+      "sha256": "86e43611117c7e34705807ccf6447b4096e3884ec140e3fac1bff40e1ef7a1c5"
     }
   },
   "fallbacks_used": [],
@@ -73,18 +73,18 @@
         256
       ],
       "min_db": 0.0,
-      "max_db": 50.2565,
-      "mean_db": 0.1705,
-      "nonzero_pixels": 324
+      "max_db": 0.0,
+      "mean_db": 0.0,
+      "nonzero_pixels": 0
     },
     "l1l2_composite": {
       "shape": [
         256,
         256
       ],
-      "min_db": 137.584,
-      "max_db": 137.5975,
-      "mean_db": 137.5907,
+      "min_db": 137.1494,
+      "max_db": 176.3037,
+      "mean_db": 141.7383,
       "nonzero_pixels": 65536
     },
     "l1l2_l2_cropped": {
@@ -102,9 +102,9 @@
         256,
         256
       ],
-      "min_db": 137.584,
-      "max_db": 167.5972,
-      "mean_db": 141.2064,
+      "min_db": 137.1494,
+      "max_db": 203.2735,
+      "mean_db": 145.0266,
       "nonzero_pixels": 65536
     },
     "l1l2l3_l2_cropped": {
@@ -124,8 +124,8 @@
       ],
       "min_db": 0.0,
       "max_db": 30.0,
-      "mean_db": 3.6157,
-      "nonzero_pixels": 9256
+      "mean_db": 3.2883,
+      "nonzero_pixels": 8183
     }
   },
   "spatial_delta": {

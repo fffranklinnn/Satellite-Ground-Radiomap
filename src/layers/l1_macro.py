@@ -733,7 +733,7 @@ class L1MacroLayer(BaseLayer):
         )
         if ned is None:
             if self.strict_data and self.enable_faraday:
-                raise RuntimeError(
+                raise StrictModeError(
                     "[L1] strict_data: Faraday rotation enabled but geomagnetic backend unavailable."
                 )
             # Conservative fallback when no geomagnetic backend is available.

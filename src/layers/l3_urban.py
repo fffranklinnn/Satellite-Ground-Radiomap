@@ -31,6 +31,7 @@ import numpy as np
 from .base import BaseLayer, LayerContext
 from ..context.frame_context import FrameContext
 from ..context.layer_states import EntryWaveState, UrbanRefinementState
+from ..context.time_utils import StrictModeError
 
 
 # ── Incident direction helpers (from branch_L3) ───────────────────────────────
@@ -184,6 +185,7 @@ class L3UrbanLayer(BaseLayer):
             tile_cache_root = str(config)
             self.nlos_loss_db = float(nlos_loss_db) if nlos_loss_db is not None else 20.0
             self.occ_loss_db  = float(occ_loss_db)  if occ_loss_db  is not None else None
+            self.strict_data  = False
             base_config = {"grid_size": 256, "coverage_km": 0.256, "resolution_m": 1.0}
             origin_lat = origin_lat or 0.0
             origin_lon = origin_lon or 0.0
@@ -192,6 +194,7 @@ class L3UrbanLayer(BaseLayer):
             self.nlos_loss_db = float(config.get("nlos_loss_db", 20.0))
             _occ = config.get("occ_loss_db")
             self.occ_loss_db  = float(_occ) if _occ is not None else None
+            self.strict_data  = bool(config.get("strict_data", False))
             # Default incident_dir from config (can be overridden per compute call)
             self._default_incident_dir = config.get("incident_dir")
             base_config = config
@@ -221,6 +224,8 @@ class L3UrbanLayer(BaseLayer):
         if self._tile_index is None:
             self._build_tile_index()
         if not self._tile_index:
+            if getattr(self, "strict_data", False):
+                raise StrictModeError(f"[L3] strict_data: Tile cache is empty: {self.tile_cache_root}")
             raise FileNotFoundError(f"[L3] Tile cache is empty: {self.tile_cache_root}")
         best_id = min(self._tile_index, key=lambda t: (t[0] - lon) ** 2 + (t[1] - lat) ** 2)[2]
         return best_id
@@ -256,6 +261,8 @@ class L3UrbanLayer(BaseLayer):
                 h_path   = tile_dir / "H.npy"
                 occ_path = tile_dir / "Occ.npy"
             if not h_path.exists():
+                if getattr(self, "strict_data", False):
+                    raise StrictModeError(f"[L3] strict_data: Missing tile cache: {h_path}")
                 raise FileNotFoundError(f"[L3] Missing tile cache: {h_path}")
 
         height_m = np.load(h_path)

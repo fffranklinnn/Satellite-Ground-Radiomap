@@ -30,6 +30,7 @@ import numpy as np
 from .base import BaseLayer, LayerContext
 from ..context.frame_context import FrameContext
 from ..context.layer_states import EntryWaveState, TerrainState
+from ..context.time_utils import StrictModeError
 from ..core.physics import SPEED_OF_LIGHT
 
 
@@ -78,6 +79,7 @@ class L2TopoLayer(BaseLayer):
             self.sat_elevation_deg = float(sat_elevation_deg) if sat_elevation_deg is not None else 45.0
             self.sat_azimuth_deg   = float(sat_azimuth_deg)
             self.satellite_altitude_km = 550.0
+            self.strict_data       = False
             base_config = {"grid_size": 256, "coverage_km": 25.6, "resolution_m": 100.0}
             origin_lat = origin_lat or 34.0
             origin_lon = origin_lon or 108.0
@@ -87,6 +89,7 @@ class L2TopoLayer(BaseLayer):
             self.sat_elevation_deg = float(config.get("satellite_elevation_deg", 45.0))
             self.sat_azimuth_deg   = float(config.get("satellite_azimuth_deg", 180.0))
             self.satellite_altitude_km = float(config.get("satellite_altitude_km", 550.0))
+            self.strict_data       = bool(config.get("strict_data", False))
             base_config            = config
 
         super().__init__(base_config, origin_lat, origin_lon)
@@ -100,6 +103,11 @@ class L2TopoLayer(BaseLayer):
         if self._src is not None:
             return
         if self.dem_path is None or not self.dem_path.exists():
+            if getattr(self, "strict_data", False):
+                raise StrictModeError(
+                    f"[L2] strict_data: DEM file not found: {self.dem_path}. "
+                    "Set dem_file in config or provide a valid path."
+                )
             raise FileNotFoundError(
                 f"[L2] DEM file not found: {self.dem_path}. "
                 "Set dem_file in config or provide a valid path."

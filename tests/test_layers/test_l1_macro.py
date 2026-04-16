@@ -241,3 +241,85 @@ def test_l1_non_strict_missing_ionex_does_not_raise(tmp_path):
     }
     layer = L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
     assert any("IONEX" in fb for fb in layer.fallbacks_used)
+
+
+# ---------------------------------------------------------------------------
+# L2 strict-mode tests (task20 / AC-6)
+# ---------------------------------------------------------------------------
+
+from src.layers.l2_topo import L2TopoLayer
+
+
+def test_l2_strict_mode_missing_dem_raises_strict_mode_error(tmp_path):
+    """Missing DEM in strict mode must raise StrictModeError."""
+    cfg = {
+        "dem_file": str(tmp_path / "nonexistent.tif"),
+        "frequency_ghz": 14.5,
+        "strict_data": True,
+        "grid_size": 256,
+        "coverage_km": 25.6,
+        "resolution_m": 100.0,
+    }
+    layer = L2TopoLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+    with pytest.raises(StrictModeError):
+        layer._open_dem()
+
+
+def test_l2_non_strict_missing_dem_raises_file_not_found(tmp_path):
+    """Missing DEM in non-strict mode raises FileNotFoundError (not StrictModeError)."""
+    cfg = {
+        "dem_file": str(tmp_path / "nonexistent.tif"),
+        "frequency_ghz": 14.5,
+        "strict_data": False,
+        "grid_size": 256,
+        "coverage_km": 25.6,
+        "resolution_m": 100.0,
+    }
+    layer = L2TopoLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+    with pytest.raises(FileNotFoundError) as exc_info:
+        layer._open_dem()
+    assert not isinstance(exc_info.value, StrictModeError)
+
+
+# ---------------------------------------------------------------------------
+# L3 strict-mode tests (task20 / AC-6)
+# ---------------------------------------------------------------------------
+
+from src.layers.l3_urban import L3UrbanLayer
+
+
+def test_l3_strict_mode_empty_tile_cache_raises_strict_mode_error(tmp_path):
+    """Empty tile cache in strict mode must raise StrictModeError."""
+    empty_cache = tmp_path / "tiles"
+    empty_cache.mkdir()
+    cfg = {
+        "tile_cache_root": str(empty_cache),
+        "nlos_loss_db": 20.0,
+        "strict_data": True,
+        "incident_dir": {"az_deg": 180.0, "el_deg": 45.0},
+        "grid_size": 256,
+        "coverage_km": 0.256,
+        "resolution_m": 1.0,
+    }
+    layer = L3UrbanLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+    with pytest.raises(StrictModeError):
+        layer._find_nearest_tile_id(108.9, 34.3)
+
+
+def test_l3_non_strict_empty_tile_cache_raises_file_not_found(tmp_path):
+    """Empty tile cache in non-strict mode raises FileNotFoundError."""
+    empty_cache = tmp_path / "tiles"
+    empty_cache.mkdir()
+    cfg = {
+        "tile_cache_root": str(empty_cache),
+        "nlos_loss_db": 20.0,
+        "strict_data": False,
+        "incident_dir": {"az_deg": 180.0, "el_deg": 45.0},
+        "grid_size": 256,
+        "coverage_km": 0.256,
+        "resolution_m": 1.0,
+    }
+    layer = L3UrbanLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+    with pytest.raises(FileNotFoundError) as exc_info:
+        layer._find_nearest_tile_id(108.9, 34.3)
+    assert not isinstance(exc_info.value, StrictModeError)

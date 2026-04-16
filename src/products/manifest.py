@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,6 +32,31 @@ def _sha256_file(path: str) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _sha256_dir(path: str) -> str:
+    """
+    Compute a deterministic SHA-256 snapshot hash for a directory.
+
+    Hashes sorted relative paths + file contents so the result is stable
+    across identical directory trees and non-empty for any non-empty directory.
+    Returns "" for missing or empty directories.
+    """
+    root = Path(path)
+    if not root.is_dir():
+        return ""
+    h = hashlib.sha256()
+    found_any = False
+    for fpath in sorted(root.rglob("*")):
+        if not fpath.is_file():
+            continue
+        rel = fpath.relative_to(root).as_posix()
+        h.update(rel.encode("utf-8"))
+        with open(fpath, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        found_any = True
+    return h.hexdigest() if found_any else ""
 
 
 def _sha256_dict(d: dict) -> str:
@@ -71,9 +98,9 @@ def collect_input_file_paths(config: dict) -> Dict[str, str]:
 
     # L3 inputs
     l3 = layers.get("l3_urban", {})
-    l3_data_dir = l3.get("data_dir") or l3.get("tiles_dir")
+    l3_data_dir = l3.get("tile_cache_root") or l3.get("data_dir") or l3.get("tiles_dir")
     if l3_data_dir:
-        paths["l3_data_dir"] = str(l3_data_dir)
+        paths["tile_cache_root"] = str(l3_data_dir)
 
     return paths
 
@@ -228,7 +255,11 @@ class ProductManifest:
             result = {}
             for label, path in files.items():
                 try:
-                    result[label] = _sha256_file(path)
+                    p = Path(path)
+                    if p.is_dir():
+                        result[label] = _sha256_dir(path)
+                    else:
+                        result[label] = _sha256_file(path)
                 except (OSError, IOError):
                     result[label] = ""
             return result

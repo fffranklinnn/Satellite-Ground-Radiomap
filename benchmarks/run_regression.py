@@ -112,13 +112,15 @@ def load_config(config_path: Path) -> dict:
 
 def _resolve_strict_flag(config: dict) -> bool:
     """
-    Merge strict-mode settings from multiple config locations.
+    Resolve the top-level strict flag from the pipeline config.
 
-    Priority (highest to lowest):
+    Reads only top-level keys:
       1. config["data_validation"]["strict"]
       2. config["strict_data"]
       3. config["strict_mode"]
     Returns False when none are set.
+
+    Per-layer strict settings are merged separately in build_layers().
     """
     dv = config.get("data_validation", {})
     if isinstance(dv, dict) and "strict" in dv:
@@ -130,23 +132,40 @@ def _resolve_strict_flag(config: dict) -> bool:
     return False
 
 
+def _layer_strict(top_strict: bool, layer_cfg: dict) -> bool:
+    """
+    Merge top-level strict flag with per-layer strict settings.
+
+    A layer is strict if EITHER the top-level flag OR the layer's own
+    strict_data / strict_mode is True.  This preserves layer-local strict
+    enforcement when the top-level flag is absent or False.
+    """
+    if top_strict:
+        return True
+    if layer_cfg.get("strict_data"):
+        return True
+    if layer_cfg.get("strict_mode"):
+        return True
+    return False
+
+
 def build_layers(config: dict, origin_lat: float, origin_lon: float,
                  enable_l1: bool, enable_l2: bool, enable_l3: bool):
-    """Build layer objects, propagating the resolved strict flag into each sub-config."""
-    strict = _resolve_strict_flag(config)
+    """Build layer objects, merging top-level and per-layer strict flags."""
+    top_strict = _resolve_strict_flag(config)
     l1_layer = l2_layer = l3_layer = None
     layers_cfg = config.get("layers", {})
     if enable_l1 and layers_cfg.get("l1_macro", {}).get("enabled", False):
         l1_cfg = copy.copy(layers_cfg["l1_macro"])
-        l1_cfg["strict_data"] = strict
+        l1_cfg["strict_data"] = _layer_strict(top_strict, l1_cfg)
         l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
     if enable_l2 and layers_cfg.get("l2_topo", {}).get("enabled", False):
         l2_cfg = copy.copy(layers_cfg["l2_topo"])
-        l2_cfg["strict_data"] = strict
+        l2_cfg["strict_data"] = _layer_strict(top_strict, l2_cfg)
         l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon)
     if enable_l3 and layers_cfg.get("l3_urban", {}).get("enabled", False):
         l3_cfg = copy.copy(layers_cfg["l3_urban"])
-        l3_cfg["strict_data"] = strict
+        l3_cfg["strict_data"] = _layer_strict(top_strict, l3_cfg)
         l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon)
     return l1_layer, l2_layer, l3_layer
 

@@ -799,6 +799,119 @@ class TestStrictModeBenchmarkStyle:
             layer.refine_urban(_make_frame())
 
 
+class TestLayerLocalStrictPrecedence:
+    """
+    Verify that _layer_strict() ORs top-level and per-layer strict flags so that:
+    - A layer with strict_data=True stays strict even when top-level strict is False/absent
+    - A layer with strict_data=False becomes strict when top-level strict is True
+    - _layer_strict() unit tests cover all four combinations
+    """
+
+    def test_layer_strict_or_semantics_unit(self):
+        """_layer_strict: OR semantics across all four (top, layer) combinations."""
+        from benchmarks.run_regression import _layer_strict
+        assert _layer_strict(True,  {"strict_data": True})  is True
+        assert _layer_strict(True,  {"strict_data": False}) is True   # top wins
+        assert _layer_strict(False, {"strict_data": True})  is True   # layer wins
+        assert _layer_strict(False, {"strict_data": False}) is False
+
+    def test_layer_strict_strict_mode_alias(self):
+        """_layer_strict: strict_mode alias is respected when strict_data absent."""
+        from benchmarks.run_regression import _layer_strict
+        assert _layer_strict(False, {"strict_mode": True})  is True
+        assert _layer_strict(False, {"strict_mode": False}) is False
+        assert _layer_strict(True,  {"strict_mode": False}) is True
+
+    def test_layer_local_strict_data_preserved_when_top_absent(self, tmp_path):
+        """Layer with strict_data=True in sub-config stays strict when top-level strict is absent."""
+        from benchmarks.run_regression import build_layers
+        config = {
+            "origin": {"latitude": 34.3416, "longitude": 108.9398},
+            # No data_validation.strict — top-level strict is False
+            "layers": {
+                "l1_macro": {"enabled": False},
+                "l2_topo": {
+                    "enabled": True,
+                    "grid_size": 256,
+                    "coverage_km": 25.6,
+                    "resolution_m": 100.0,
+                    "dem_file": str(tmp_path / "missing.tif"),
+                    "frequency_ghz": 14.5,
+                    "strict_data": True,   # layer-local strict
+                },
+                "l3_urban": {"enabled": False},
+            },
+        }
+        _, l2_layer, _ = build_layers(config, 34.3416, 108.9398,
+                                       enable_l1=False, enable_l2=True, enable_l3=False)
+        assert l2_layer is not None
+        assert l2_layer.strict_data is True, (
+            "Layer-local strict_data=True must be preserved when top-level strict is absent"
+        )
+        with pytest.raises(StrictModeError):
+            l2_layer.propagate_terrain(_make_frame())
+
+    def test_layer_local_strict_data_preserved_when_top_false(self, tmp_path):
+        """Layer with strict_data=True stays strict even when data_validation.strict=False."""
+        from benchmarks.run_regression import build_layers
+        config = {
+            "origin": {"latitude": 34.3416, "longitude": 108.9398},
+            "data_validation": {"strict": False},   # top-level explicitly False
+            "layers": {
+                "l1_macro": {"enabled": False},
+                "l2_topo": {
+                    "enabled": True,
+                    "grid_size": 256,
+                    "coverage_km": 25.6,
+                    "resolution_m": 100.0,
+                    "dem_file": str(tmp_path / "missing.tif"),
+                    "frequency_ghz": 14.5,
+                    "strict_data": True,   # layer-local strict must survive
+                },
+                "l3_urban": {"enabled": False},
+            },
+        }
+        _, l2_layer, _ = build_layers(config, 34.3416, 108.9398,
+                                       enable_l1=False, enable_l2=True, enable_l3=False)
+        assert l2_layer is not None
+        assert l2_layer.strict_data is True, (
+            "Layer-local strict_data=True must survive data_validation.strict=False"
+        )
+        with pytest.raises(StrictModeError):
+            l2_layer.propagate_terrain(_make_frame())
+
+    def test_layer_local_strict_mode_alias_preserved_when_top_absent(self, tmp_path):
+        """Layer with strict_mode=True (alias) stays strict when top-level strict is absent."""
+        from benchmarks.run_regression import build_layers
+        empty_cache = tmp_path / "tiles"
+        empty_cache.mkdir()
+        config = {
+            "origin": {"latitude": 34.3416, "longitude": 108.9398},
+            "layers": {
+                "l1_macro": {"enabled": False},
+                "l2_topo": {"enabled": False},
+                "l3_urban": {
+                    "enabled": True,
+                    "grid_size": 256,
+                    "coverage_km": 0.256,
+                    "resolution_m": 1.0,
+                    "tile_cache_root": str(empty_cache),
+                    "nlos_loss_db": 20.0,
+                    "incident_dir": {"az_deg": 180.0, "el_deg": 45.0},
+                    "strict_mode": True,   # alias — must be honoured
+                },
+            },
+        }
+        _, _, l3_layer = build_layers(config, 34.3416, 108.9398,
+                                       enable_l1=False, enable_l2=False, enable_l3=True)
+        assert l3_layer is not None
+        assert l3_layer.strict_data is True, (
+            "Layer-local strict_mode=True alias must be preserved when top-level strict is absent"
+        )
+        with pytest.raises(StrictModeError):
+            l3_layer.refine_urban(_make_frame())
+
+
 class TestTopLevelStrictViaDataValidation:
     """
     End-to-end strict tests that exercise the benchmark/main-style config path.

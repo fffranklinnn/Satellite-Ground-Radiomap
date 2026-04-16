@@ -198,6 +198,7 @@ class L1MacroLayer(BaseLayer):
         self.fallback_b_t = float(iono_cfg.get("fallback_b_t", 45e-6))
         self.strict_data = bool(self.cfg.get("strict_data", self.cfg.get("strict_mode", False)))
         self._fallbacks_used: List[str] = []
+        self._constructor_fallbacks: List[str] = []  # set during __init__, never cleared
         self._geomag_backend = "uninitialized"
         self._geomag_model = None
 
@@ -231,12 +232,12 @@ class L1MacroLayer(BaseLayer):
                 except Exception as exc:
                     if self.strict_data:
                         raise StrictModeError(f"[L1] strict_data: failed to load IONEX ({ionex_path}): {exc}") from exc
-                    self._fallbacks_used.append(f"L1: IONEX load failed ({exc}); using default TEC={self.default_tec:.1f}")
+                    self._constructor_fallbacks.append(f"L1: IONEX load failed ({exc}); using default TEC={self.default_tec:.1f}")
                     print(f"[L1] IONEX unavailable ({exc}); using fallback TEC={self.default_tec:.1f}.")
             else:
                 if self.strict_data:
                     raise StrictModeError(f"[L1] strict_data: IONEX file not found: {ionex_path}")
-                self._fallbacks_used.append(f"L1: IONEX file not found ({ionex_path}); using default TEC={self.default_tec:.1f}")
+                self._constructor_fallbacks.append(f"L1: IONEX file not found ({ionex_path}); using default TEC={self.default_tec:.1f}")
                 print(f"[L1] IONEX file not found: {ionex_path}; using fallback TEC={self.default_tec:.1f}.")
 
         self.era5 = None
@@ -249,7 +250,7 @@ class L1MacroLayer(BaseLayer):
             else:
                 if self.strict_data:
                     raise StrictModeError(f"[L1] strict_data: ERA5 unavailable or unreadable: {era5_path}")
-                self._fallbacks_used.append(f"L1: ERA5 unavailable ({era5_path}); using simplified atmospheric model")
+                self._constructor_fallbacks.append(f"L1: ERA5 unavailable ({era5_path}); using simplified atmospheric model")
                 print("[L1] ERA5 unavailable; using simplified atmospheric model.")
 
         self.ts = load.timescale()
@@ -315,11 +316,11 @@ class L1MacroLayer(BaseLayer):
 
     @property
     def fallbacks_used(self) -> List[str]:
-        """Return fallback descriptions recorded since last clear_fallbacks() call."""
-        return list(self._fallbacks_used)
+        """Return all fallback descriptions: constructor-time + per-frame accumulated."""
+        return list(self._constructor_fallbacks) + list(self._fallbacks_used)
 
     def clear_fallbacks(self) -> None:
-        """Clear the accumulated fallback list (call before each frame if needed)."""
+        """Clear per-frame fallback accumulator. Constructor-time fallbacks are preserved."""
         self._fallbacks_used = []
 
     def set_time(self, dt: datetime):

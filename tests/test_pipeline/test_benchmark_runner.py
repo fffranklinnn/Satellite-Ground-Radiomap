@@ -662,3 +662,139 @@ class TestStrictModeEndToEnd:
             manifest = runner.run_frame(TS_UTC, tmp_path, ["path_loss_map"])
         assert isinstance(manifest.fallbacks_used, (list, tuple))
 
+
+# ---------------------------------------------------------------------------
+# Benchmark/main-style strict-mode and fallback provenance tests (task20 / AC-6)
+# These tests simulate the benchmark/main.py config path: a full config dict
+# with strict_data=True in the layer sub-config, exercising the real L1 lifecycle.
+# ---------------------------------------------------------------------------
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+TLE_PATH_FOR_TESTS = ROOT_DIR / "data" / "starlink-2025-tle" / "2025-01-03.tle"
+
+L1_BASE_CFG = {
+    "grid_size": 256,
+    "coverage_km": 256.0,
+    "resolution_m": 1000.0,
+    "frequency_ghz": 10.0,
+    "tle_file": str(TLE_PATH_FOR_TESTS),
+}
+
+
+class TestStrictModeBenchmarkStyle:
+    """
+    Strict-mode tests through benchmark/main-style config paths.
+    Each test constructs a layer from a config dict (as build_layers() does),
+    not by calling internal helpers directly.
+    """
+
+    def test_l1_strict_missing_ionex_raises_via_constructor(self, tmp_path):
+        """L1 constructor with strict_data=True and missing IONEX raises StrictModeError."""
+        if not TLE_PATH_FOR_TESTS.exists():
+            pytest.skip("TLE file not available")
+        cfg = {
+            **L1_BASE_CFG,
+            "strict_data": True,
+            "ionex_file": str(tmp_path / "nonexistent.INX"),
+        }
+        from src.layers.l1_macro import L1MacroLayer
+        with pytest.raises(StrictModeError):
+            L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+
+    def test_l1_strict_mode_alias_missing_ionex_raises(self, tmp_path):
+        """L1 constructor with strict_mode=True (alias) and missing IONEX raises StrictModeError."""
+        if not TLE_PATH_FOR_TESTS.exists():
+            pytest.skip("TLE file not available")
+        cfg = {
+            **L1_BASE_CFG,
+            "strict_mode": True,  # alias for strict_data
+            "ionex_file": str(tmp_path / "nonexistent.INX"),
+        }
+        from src.layers.l1_macro import L1MacroLayer
+        with pytest.raises(StrictModeError):
+            L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+
+    def test_l1_strict_unreadable_era5_raises_via_constructor(self, tmp_path):
+        """L1 constructor with strict_data=True and unreadable ERA5 raises StrictModeError."""
+        if not TLE_PATH_FOR_TESTS.exists():
+            pytest.skip("TLE file not available")
+        bad_era5 = tmp_path / "bad.nc"
+        bad_era5.write_bytes(b"not a netcdf file")
+        cfg = {
+            **L1_BASE_CFG,
+            "strict_data": True,
+            "era5_file": str(bad_era5),
+        }
+        from src.layers.l1_macro import L1MacroLayer
+        with pytest.raises(StrictModeError):
+            L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+
+    def test_l1_non_strict_missing_ionex_records_constructor_fallback(self, tmp_path):
+        """L1 non-strict with missing IONEX records fallback in constructor_fallbacks (not cleared by clear_fallbacks)."""
+        if not TLE_PATH_FOR_TESTS.exists():
+            pytest.skip("TLE file not available")
+        cfg = {
+            **L1_BASE_CFG,
+            "strict_data": False,
+            "ionex_file": str(tmp_path / "nonexistent.INX"),
+        }
+        from src.layers.l1_macro import L1MacroLayer
+        layer = L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+        # Constructor fallback must be present
+        assert any("IONEX" in fb for fb in layer.fallbacks_used)
+        # clear_fallbacks must NOT erase constructor fallbacks
+        layer.clear_fallbacks()
+        assert any("IONEX" in fb for fb in layer.fallbacks_used), (
+            "Constructor-time IONEX fallback must survive clear_fallbacks()"
+        )
+
+    def test_l1_non_strict_missing_era5_records_constructor_fallback(self, tmp_path):
+        """L1 non-strict with unreadable ERA5 records fallback that survives clear_fallbacks."""
+        if not TLE_PATH_FOR_TESTS.exists():
+            pytest.skip("TLE file not available")
+        bad_era5 = tmp_path / "bad.nc"
+        bad_era5.write_bytes(b"not a netcdf file")
+        cfg = {
+            **L1_BASE_CFG,
+            "strict_data": False,
+            "era5_file": str(bad_era5),
+        }
+        from src.layers.l1_macro import L1MacroLayer
+        layer = L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
+        assert any("ERA5" in fb for fb in layer.fallbacks_used)
+        layer.clear_fallbacks()
+        assert any("ERA5" in fb for fb in layer.fallbacks_used), (
+            "Constructor-time ERA5 fallback must survive clear_fallbacks()"
+        )
+
+    def test_l2_strict_mode_alias_missing_dem_raises(self, tmp_path):
+        """L2 constructor with strict_mode=True (alias) and missing DEM raises StrictModeError."""
+        cfg = {
+            "dem_file": str(tmp_path / "nonexistent.tif"),
+            "frequency_ghz": 14.5,
+            "strict_mode": True,  # alias for strict_data
+            "grid_size": 256,
+            "coverage_km": 25.6,
+            "resolution_m": 100.0,
+        }
+        layer = L2TopoLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+        with pytest.raises(StrictModeError):
+            layer.propagate_terrain(_make_frame())
+
+    def test_l3_strict_mode_alias_empty_cache_raises(self, tmp_path):
+        """L3 constructor with strict_mode=True (alias) and empty cache raises StrictModeError."""
+        empty_cache = tmp_path / "tiles"
+        empty_cache.mkdir()
+        cfg = {
+            "tile_cache_root": str(empty_cache),
+            "nlos_loss_db": 20.0,
+            "strict_mode": True,  # alias for strict_data
+            "incident_dir": {"az_deg": 180.0, "el_deg": 45.0},
+            "grid_size": 256,
+            "coverage_km": 0.256,
+            "resolution_m": 1.0,
+        }
+        layer = L3UrbanLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+        with pytest.raises(StrictModeError):
+            layer.refine_urban(_make_frame())
+

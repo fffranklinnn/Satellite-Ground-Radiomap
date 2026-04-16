@@ -89,7 +89,7 @@ class L2TopoLayer(BaseLayer):
             self.sat_elevation_deg = float(config.get("satellite_elevation_deg", 45.0))
             self.sat_azimuth_deg   = float(config.get("satellite_azimuth_deg", 180.0))
             self.satellite_altitude_km = float(config.get("satellite_altitude_km", 550.0))
-            self.strict_data       = bool(config.get("strict_data", False))
+            self.strict_data       = bool(config.get("strict_data", config.get("strict_mode", False)))
             base_config            = config
 
         super().__init__(base_config, origin_lat, origin_lon)

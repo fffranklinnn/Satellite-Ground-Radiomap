@@ -16,7 +16,6 @@ Usage:
 import argparse
 import hashlib
 import json
-import logging
 import math
 import sys
 from datetime import datetime, timezone
@@ -62,19 +61,6 @@ def _repo_relative(path: str) -> str:
         return str(p)
 
 
-class _FallbackTracker(logging.Handler):
-    """Capture WARNING-level log messages as fallback records."""
-
-    def __init__(self):
-        super().__init__(logging.WARNING)
-        self.records: list[str] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        msg = record.getMessage()
-        if any(kw in msg for kw in ("fallback", "unavailable", "Fallback", "Unavailable")):
-            self.records.append(msg)
-
-
 def capture(config_path: str, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -99,10 +85,6 @@ def capture(config_path: str, output_dir: Path) -> None:
     grid = GridSpec.from_legacy_args(origin_lat, origin_lon, coarse_km, grid_size, grid_size)
     fb = FrameBuilder(grid=grid)
 
-    # Attach fallback tracker to root logger
-    tracker = _FallbackTracker()
-    logging.getLogger().addHandler(tracker)
-
     # Build a single frame (same satellite selection for all scenes)
     frame = fb.build(frame_dt)
 
@@ -110,6 +92,8 @@ def capture(config_path: str, output_dir: Path) -> None:
     print("Capturing L1-only scene...")
     l1 = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
     entry = l1.propagate_entry(frame)
+    # Collect fallbacks from L1 (constructor-time + per-frame)
+    l1_fallbacks = list(l1.fallbacks_used)
     msm_l1 = MultiScaleMap.compose(frame_id=frame.frame_id, grid=frame.grid,
                                     entry=entry, terrain=None, urban=None)
     l1_map = msm_l1.composite_db
@@ -152,8 +136,6 @@ def capture(config_path: str, output_dir: Path) -> None:
             else np.zeros((256, 256), dtype=np.float32))
     np.save(output_dir / "l1l2l3_l3.npy", msm_full.l3_db if msm_full.l3_db is not None
             else np.zeros((256, 256), dtype=np.float32))
-
-    logging.getLogger().removeHandler(tracker)
 
     # --- Input file hashes (repo-relative paths) ---
     raw_input_paths = collect_input_file_paths(config)
@@ -216,7 +198,7 @@ def capture(config_path: str, output_dir: Path) -> None:
         "origin_lon": origin_lon,
         "input_files": input_files,
         "output_files": output_files,
-        "fallbacks_used": tracker.records,
+        "fallbacks_used": l1_fallbacks,
         "satellite_meta": sat_meta,
         "scenes": {
             "l1_only": _stats(l1_map),
@@ -254,8 +236,8 @@ def capture(config_path: str, output_dir: Path) -> None:
     print(f"  L2 raw (25.6km): {_stats(l2_raw)['min_db']:.2f}~{_stats(l2_raw)['max_db']:.2f} dB  nonzero={_stats(l2_raw)['nonzero_pixels']}")
     print(f"  L1+L2 composite: {_stats(composite_l1l2)['min_db']:.2f}~{_stats(composite_l1l2)['max_db']:.2f} dB")
     print(f"  L1+L2+L3:        {_stats(composite_full)['min_db']:.2f}~{_stats(composite_full)['max_db']:.2f} dB")
-    print(f"\nFallbacks recorded: {len(tracker.records)}")
-    for fallback_msg in tracker.records:
+    print(f"\nFallbacks recorded: {len(l1_fallbacks)}")
+    for fallback_msg in l1_fallbacks:
         print(f"  - {fallback_msg}")
     print(f"\nSpatial delta (L2 SW-corner bug):")
     print(f"  SW corner = ({origin_lat:.4f}N, {origin_lon:.4f}E)")

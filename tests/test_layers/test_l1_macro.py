@@ -145,13 +145,15 @@ def test_l1_fallbacks_used_records_missing_ionex(tmp_path):
     assert any("IONEX" in fb for fb in layer.fallbacks_used)
 
 
-def test_l1_clear_fallbacks_resets_list(tmp_path):
-    """clear_fallbacks() must reset the fallback list to empty."""
+def test_l1_clear_fallbacks_resets_per_frame_only(tmp_path):
+    """clear_fallbacks() must preserve constructor-time fallbacks and only clear per-frame ones."""
     cfg = {**BASE_CONFIG, "ionex_file": str(tmp_path / "nonexistent.INX")}
     layer = L1MacroLayer(cfg, origin_lat=39.9, origin_lon=116.4)
-    assert len(layer.fallbacks_used) > 0
+    constructor_fallbacks = list(layer.fallbacks_used)
+    assert len(constructor_fallbacks) > 0, "Expected constructor-time IONEX fallback"
     layer.clear_fallbacks()
-    assert layer.fallbacks_used == []
+    # Constructor-time fallbacks must survive clear_fallbacks()
+    assert layer.fallbacks_used == constructor_fallbacks
 
 
 def test_l1_fallbacks_used_returns_copy():

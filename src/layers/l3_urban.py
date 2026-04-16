@@ -194,7 +194,7 @@ class L3UrbanLayer(BaseLayer):
             self.nlos_loss_db = float(config.get("nlos_loss_db", 20.0))
             _occ = config.get("occ_loss_db")
             self.occ_loss_db  = float(_occ) if _occ is not None else None
-            self.strict_data  = bool(config.get("strict_data", False))
+            self.strict_data  = bool(config.get("strict_data", config.get("strict_mode", False)))
             # Default incident_dir from config (can be overridden per compute call)
             self._default_incident_dir = config.get("incident_dir")
             base_config = config

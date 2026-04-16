@@ -189,12 +189,14 @@ def check_manifest_fields(
         "ac": "AC-6 / AC-7",
     })
 
-    # AC-6: input_file_hashes non-empty (provenance helper wired correctly)
+    # AC-6: input_file_hashes keys match golden manifest input_files keys
+    golden_input_keys = set(golden_manifest.get("input_files", {}).keys())
+    actual_input_keys = set(dict(manifest.input_file_hashes).keys())
     checks.append({
-        "field": f"{scene_label}/input_file_hashes_populated",
-        "actual": bool(manifest.input_file_hashes),
-        "reference": True,
-        "passed": bool(manifest.input_file_hashes),
+        "field": f"{scene_label}/input_file_hashes_keys_match_golden",
+        "actual": sorted(actual_input_keys),
+        "reference": sorted(golden_input_keys),
+        "passed": actual_input_keys == golden_input_keys,
         "ac": "AC-6",
     })
 
@@ -207,12 +209,14 @@ def check_manifest_fields(
         "ac": "AC-6",
     })
 
-    # AC-6: fallbacks_used is a list (provenance field wired from BenchmarkRunner)
+    # AC-6: fallbacks_used matches golden manifest (same provenance)
+    golden_fallbacks = golden_manifest.get("fallbacks_used", [])
+    actual_fallbacks = list(manifest.fallbacks_used)
     checks.append({
-        "field": f"{scene_label}/fallbacks_used_is_list",
-        "actual": isinstance(manifest.fallbacks_used, (list, tuple)),
-        "reference": True,
-        "passed": isinstance(manifest.fallbacks_used, (list, tuple)),
+        "field": f"{scene_label}/fallbacks_used_matches_golden",
+        "actual": actual_fallbacks,
+        "reference": golden_fallbacks,
+        "passed": actual_fallbacks == golden_fallbacks,
         "ac": "AC-6",
     })
 
@@ -330,8 +334,41 @@ def run_scene(
             "actual": str(pt_files[0]) if pt_files else None,
         })
 
-    # AC-1/AC-4: shape check + typed-state component traceability
+    # AC-1/AC-4: shape check for all exported products + typed-state invariants
     expected_shape = (256, 256)
+    # Products that require specific states to be non-None
+    _state_requirements = {
+        "path_loss_map": [],  # composite — always valid
+        "visibility_mask": ["l1"],
+        "elevation_field": ["l1"],
+        "azimuth_field": ["l1"],
+        "terrain_blockage": ["l2"],
+        "urban_residual": ["l3"],
+    }
+    for pt in scene_product_types:
+        pt_files = sorted(scene_dir.glob(f"*{pt}.npy"))
+        if not pt_files:
+            continue
+        arr = np.load(pt_files[0])
+        # Shape invariant: every product must match the grid
+        comparisons.append({
+            "name": f"{scene_label}/product_shape/{pt}",
+            "passed": arr.shape == expected_shape,
+            "actual_shape": list(arr.shape),
+            "expected_shape": list(expected_shape),
+            "ac": "AC-1 / AC-4",
+        })
+        # Typed-state invariant: product is only present when required state is enabled
+        required_states = _state_requirements.get(pt, [])
+        states_present = all(layer_flags.get(s, False) for s in required_states)
+        comparisons.append({
+            "name": f"{scene_label}/product_state_contract/{pt}",
+            "passed": states_present,
+            "required_states": required_states,
+            "layer_flags": dict(layer_flags),
+            "ac": "AC-4 / AC-7",
+        })
+
     if actual_arr is not None:
         comparisons.append({
             "name": f"{scene_label}/output_shape_matches_grid",

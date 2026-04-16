@@ -58,7 +58,10 @@
       "sha256": "86e43611117c7e34705807ccf6447b4096e3884ec140e3fac1bff40e1ef7a1c5"
     }
   },
-  "fallbacks_used": [],
+  "fallbacks_used": [
+    "L1: IONEX load failed (Compressed file ended before the end-of-stream marker was reached); using default TEC=10.0",
+    "L1: ERA5 unavailable (/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/data/l1_space/data/data_stream-oper_stepType-instant.nc); using simplified atmospheric model"
+  ],
   "satellite_meta": {},
   "scenes": {
     "l1_only": {

@@ -1,6 +1,6 @@
 {
   "schema_version": "3",
-  "timestamp_utc": "2026-04-16T03:36:12.639994+00:00",
+  "timestamp_utc": "2026-04-16T08:46:46.443302+00:00",
   "config_path": "benchmarks/golden_scenes_config.yaml",
   "golden_dir": "benchmarks/golden_scenes",
   "output_dir": "benchmarks/baselines/regression_run",
@@ -70,13 +70,11 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1_only/product_state_contract/path_loss_map",
+      "name": "l1_only/product_typed_state_linkage/path_loss_map",
       "passed": true,
-      "required_states": [],
-      "layer_flags": {
-        "l1": true,
-        "l2": false,
-        "l3": false
+      "required_state": null,
+      "detail": {
+        "frame_id": "20250103T000000Z_nosat"
       },
       "ac": "AC-4 / AC-7"
     },
@@ -94,15 +92,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1_only/product_state_contract/visibility_mask",
+      "name": "l1_only/product_typed_state_linkage/visibility_mask",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": false,
-        "l3": false
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -120,15 +118,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1_only/product_state_contract/elevation_field",
+      "name": "l1_only/product_typed_state_linkage/elevation_field",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": false,
-        "l3": false
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -146,15 +144,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1_only/product_state_contract/azimuth_field",
+      "name": "l1_only/product_typed_state_linkage/azimuth_field",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": false,
-        "l3": false
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -255,13 +253,11 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2_composite/product_state_contract/path_loss_map",
+      "name": "l1l2_composite/product_typed_state_linkage/path_loss_map",
       "passed": true,
-      "required_states": [],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": false
+      "required_state": null,
+      "detail": {
+        "frame_id": "20250103T000000Z_nosat"
       },
       "ac": "AC-4 / AC-7"
     },
@@ -279,15 +275,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2_composite/product_state_contract/visibility_mask",
+      "name": "l1l2_composite/product_typed_state_linkage/visibility_mask",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": false
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -305,15 +301,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2_composite/product_state_contract/elevation_field",
+      "name": "l1l2_composite/product_typed_state_linkage/elevation_field",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": false
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -331,15 +327,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2_composite/product_state_contract/azimuth_field",
+      "name": "l1l2_composite/product_typed_state_linkage/azimuth_field",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": false
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -357,15 +353,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2_composite/product_state_contract/terrain_blockage",
+      "name": "l1l2_composite/product_typed_state_linkage/terrain_blockage",
       "passed": true,
-      "required_states": [
-        "l2"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": false
+      "required_state": "terrain",
+      "detail": {
+        "state_type": "TerrainState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -472,13 +468,11 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2l3_composite/product_state_contract/path_loss_map",
+      "name": "l1l2l3_composite/product_typed_state_linkage/path_loss_map",
       "passed": true,
-      "required_states": [],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": true
+      "required_state": null,
+      "detail": {
+        "frame_id": "20250103T000000Z_nosat"
       },
       "ac": "AC-4 / AC-7"
     },
@@ -496,15 +490,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2l3_composite/product_state_contract/visibility_mask",
+      "name": "l1l2l3_composite/product_typed_state_linkage/visibility_mask",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": true
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -522,15 +516,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2l3_composite/product_state_contract/elevation_field",
+      "name": "l1l2l3_composite/product_typed_state_linkage/elevation_field",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": true
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -548,15 +542,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2l3_composite/product_state_contract/azimuth_field",
+      "name": "l1l2l3_composite/product_typed_state_linkage/azimuth_field",
       "passed": true,
-      "required_states": [
-        "l1"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": true
+      "required_state": "entry",
+      "detail": {
+        "state_type": "EntryWaveState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -574,15 +568,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2l3_composite/product_state_contract/terrain_blockage",
+      "name": "l1l2l3_composite/product_typed_state_linkage/terrain_blockage",
       "passed": true,
-      "required_states": [
-        "l2"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": true
+      "required_state": "terrain",
+      "detail": {
+        "state_type": "TerrainState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -600,15 +594,15 @@
       "ac": "AC-1 / AC-4"
     },
     {
-      "name": "l1l2l3_composite/product_state_contract/urban_residual",
+      "name": "l1l2l3_composite/product_typed_state_linkage/urban_residual",
       "passed": true,
-      "required_states": [
-        "l3"
-      ],
-      "layer_flags": {
-        "l1": true,
-        "l2": true,
-        "l3": true
+      "required_state": "urban",
+      "detail": {
+        "state_type": "UrbanRefinementState",
+        "state_frame_id": "20250103T000000Z_nosat",
+        "frame_frame_id": "20250103T000000Z_nosat",
+        "frame_id_match": true,
+        "grid_match": true
       },
       "ac": "AC-4 / AC-7"
     },
@@ -662,21 +656,21 @@
       "ac": "AC-6 / AC-7"
     },
     {
-      "field": "l1_only/input_file_hashes_keys_match_golden",
-      "actual": [
-        "dem_file",
-        "era5_file",
-        "ionex_file",
-        "tile_cache_root",
-        "tle_file"
-      ],
-      "reference": [
-        "dem_file",
-        "era5_file",
-        "ionex_file",
-        "tile_cache_root",
-        "tle_file"
-      ],
+      "field": "l1_only/input_file_hashes_match_golden",
+      "actual": {
+        "tle_file": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2",
+        "ionex_file": "ddca2913df79985c6ac68d4303a7333ca6680c46a3f8a486de6b5534ee692ef2",
+        "era5_file": "a715509fde6b7f9a50a9ac2617b2201c9d3a863d3793d68a818565cab12069d5",
+        "dem_file": "d796a25eae49bb4390f4905a2a887fe8e550d1bfcc27b74f359e5684285eee5b",
+        "tile_cache_root": "8ccd2af926498a8cf72d3e4f9b2c925535d286d15a6fb6209e54c53eb7674a27"
+      },
+      "reference": {
+        "tle_file": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2",
+        "ionex_file": "ddca2913df79985c6ac68d4303a7333ca6680c46a3f8a486de6b5534ee692ef2",
+        "era5_file": "a715509fde6b7f9a50a9ac2617b2201c9d3a863d3793d68a818565cab12069d5",
+        "dem_file": "d796a25eae49bb4390f4905a2a887fe8e550d1bfcc27b74f359e5684285eee5b",
+        "tile_cache_root": "8ccd2af926498a8cf72d3e4f9b2c925535d286d15a6fb6209e54c53eb7674a27"
+      },
       "passed": true,
       "ac": "AC-6"
     },
@@ -743,21 +737,21 @@
       "ac": "AC-6 / AC-7"
     },
     {
-      "field": "l1l2_composite/input_file_hashes_keys_match_golden",
-      "actual": [
-        "dem_file",
-        "era5_file",
-        "ionex_file",
-        "tile_cache_root",
-        "tle_file"
-      ],
-      "reference": [
-        "dem_file",
-        "era5_file",
-        "ionex_file",
-        "tile_cache_root",
-        "tle_file"
-      ],
+      "field": "l1l2_composite/input_file_hashes_match_golden",
+      "actual": {
+        "tle_file": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2",
+        "ionex_file": "ddca2913df79985c6ac68d4303a7333ca6680c46a3f8a486de6b5534ee692ef2",
+        "era5_file": "a715509fde6b7f9a50a9ac2617b2201c9d3a863d3793d68a818565cab12069d5",
+        "dem_file": "d796a25eae49bb4390f4905a2a887fe8e550d1bfcc27b74f359e5684285eee5b",
+        "tile_cache_root": "8ccd2af926498a8cf72d3e4f9b2c925535d286d15a6fb6209e54c53eb7674a27"
+      },
+      "reference": {
+        "tle_file": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2",
+        "ionex_file": "ddca2913df79985c6ac68d4303a7333ca6680c46a3f8a486de6b5534ee692ef2",
+        "era5_file": "a715509fde6b7f9a50a9ac2617b2201c9d3a863d3793d68a818565cab12069d5",
+        "dem_file": "d796a25eae49bb4390f4905a2a887fe8e550d1bfcc27b74f359e5684285eee5b",
+        "tile_cache_root": "8ccd2af926498a8cf72d3e4f9b2c925535d286d15a6fb6209e54c53eb7674a27"
+      },
       "passed": true,
       "ac": "AC-6"
     },
@@ -824,21 +818,21 @@
       "ac": "AC-6 / AC-7"
     },
     {
-      "field": "l1l2l3_composite/input_file_hashes_keys_match_golden",
-      "actual": [
-        "dem_file",
-        "era5_file",
-        "ionex_file",
-        "tile_cache_root",
-        "tle_file"
-      ],
-      "reference": [
-        "dem_file",
-        "era5_file",
-        "ionex_file",
-        "tile_cache_root",
-        "tle_file"
-      ],
+      "field": "l1l2l3_composite/input_file_hashes_match_golden",
+      "actual": {
+        "tle_file": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2",
+        "ionex_file": "ddca2913df79985c6ac68d4303a7333ca6680c46a3f8a486de6b5534ee692ef2",
+        "era5_file": "a715509fde6b7f9a50a9ac2617b2201c9d3a863d3793d68a818565cab12069d5",
+        "dem_file": "d796a25eae49bb4390f4905a2a887fe8e550d1bfcc27b74f359e5684285eee5b",
+        "tile_cache_root": "8ccd2af926498a8cf72d3e4f9b2c925535d286d15a6fb6209e54c53eb7674a27"
+      },
+      "reference": {
+        "tle_file": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2",
+        "ionex_file": "ddca2913df79985c6ac68d4303a7333ca6680c46a3f8a486de6b5534ee692ef2",
+        "era5_file": "a715509fde6b7f9a50a9ac2617b2201c9d3a863d3793d68a818565cab12069d5",
+        "dem_file": "d796a25eae49bb4390f4905a2a887fe8e550d1bfcc27b74f359e5684285eee5b",
+        "tile_cache_root": "8ccd2af926498a8cf72d3e4f9b2c925535d286d15a6fb6209e54c53eb7674a27"
+      },
       "passed": true,
       "ac": "AC-6"
     },

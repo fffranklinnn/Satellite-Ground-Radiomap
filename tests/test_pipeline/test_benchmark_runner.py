@@ -798,3 +798,109 @@ class TestStrictModeBenchmarkStyle:
         with pytest.raises(StrictModeError):
             layer.refine_urban(_make_frame())
 
+
+class TestTopLevelStrictViaDataValidation:
+    """
+    End-to-end strict tests that exercise the benchmark/main-style config path.
+
+    These tests set data_validation.strict=True at the top level and call
+    build_layers() from benchmarks/run_regression.py, verifying that the
+    resolved strict flag propagates into each layer constructor so that
+    missing/unreadable data raises StrictModeError rather than silently
+    falling back.
+    """
+
+    def _base_config(self, tmp_path) -> dict:
+        return {
+            "origin": {"latitude": 34.3416, "longitude": 108.9398},
+            "data_validation": {"strict": True, "snapshot_id": "test"},
+            "layers": {
+                "l1_macro": {
+                    "enabled": True,
+                    "grid_size": 256,
+                    "coverage_km": 256.0,
+                    "resolution_m": 1000.0,
+                    "frequency_ghz": 14.5,
+                    "satellite_altitude_km": 550.0,
+                    "tle_file": str(TLE_PATH_FOR_TESTS),
+                    "ionex_file": str(tmp_path / "missing.INX"),
+                    "era5_file": str(tmp_path / "missing.nc"),
+                },
+                "l2_topo": {
+                    "enabled": True,
+                    "grid_size": 256,
+                    "coverage_km": 25.6,
+                    "resolution_m": 100.0,
+                    "dem_file": str(tmp_path / "missing.tif"),
+                    "frequency_ghz": 14.5,
+                },
+                "l3_urban": {
+                    "enabled": True,
+                    "grid_size": 256,
+                    "coverage_km": 0.256,
+                    "resolution_m": 1.0,
+                    "tile_cache_root": str(tmp_path / "empty_tiles"),
+                    "nlos_loss_db": 20.0,
+                    "incident_dir": {"az_deg": 180.0, "el_deg": 45.0},
+                },
+            },
+        }
+
+    def test_top_level_strict_l1_missing_ionex_raises(self, tmp_path):
+        """data_validation.strict=True propagates to L1; missing IONEX raises StrictModeError."""
+        if not TLE_PATH_FOR_TESTS.exists():
+            pytest.skip("TLE file not available")
+        from benchmarks.run_regression import build_layers
+        config = self._base_config(tmp_path)
+        with pytest.raises(StrictModeError):
+            build_layers(config, 34.3416, 108.9398,
+                         enable_l1=True, enable_l2=False, enable_l3=False)
+
+    def test_top_level_strict_l2_missing_dem_raises(self, tmp_path):
+        """data_validation.strict=True propagates to L2; missing DEM raises StrictModeError on propagate_terrain."""
+        from benchmarks.run_regression import build_layers
+        config = self._base_config(tmp_path)
+        config["layers"]["l1_macro"]["enabled"] = False
+        _, l2_layer, _ = build_layers(config, 34.3416, 108.9398,
+                                       enable_l1=False, enable_l2=True, enable_l3=False)
+        assert l2_layer is not None
+        assert l2_layer.strict_data is True
+        with pytest.raises(StrictModeError):
+            l2_layer.propagate_terrain(_make_frame())
+
+    def test_top_level_strict_l3_empty_cache_raises(self, tmp_path):
+        """data_validation.strict=True propagates to L3; empty tile cache raises StrictModeError on refine_urban."""
+        from benchmarks.run_regression import build_layers
+        config = self._base_config(tmp_path)
+        config["layers"]["l1_macro"]["enabled"] = False
+        config["layers"]["l2_topo"]["enabled"] = False
+        (tmp_path / "empty_tiles").mkdir()
+        _, _, l3_layer = build_layers(config, 34.3416, 108.9398,
+                                       enable_l1=False, enable_l2=False, enable_l3=True)
+        assert l3_layer is not None
+        assert l3_layer.strict_data is True
+        with pytest.raises(StrictModeError):
+            l3_layer.refine_urban(_make_frame())
+
+    def test_top_level_strict_false_l2_raises_file_not_found(self, tmp_path):
+        """data_validation.strict=False: L2 with missing DEM raises FileNotFoundError, not StrictModeError."""
+        from benchmarks.run_regression import build_layers
+        config = self._base_config(tmp_path)
+        config["data_validation"]["strict"] = False
+        config["layers"]["l1_macro"]["enabled"] = False
+        _, l2_layer, _ = build_layers(config, 34.3416, 108.9398,
+                                       enable_l1=False, enable_l2=True, enable_l3=False)
+        assert l2_layer is not None
+        assert l2_layer.strict_data is False
+        with pytest.raises(FileNotFoundError):
+            l2_layer.propagate_terrain(_make_frame())
+
+    def test_resolve_strict_flag_priority(self, tmp_path):
+        """_resolve_strict_flag: data_validation.strict takes priority over strict_data/strict_mode."""
+        from benchmarks.run_regression import _resolve_strict_flag
+        assert _resolve_strict_flag({"data_validation": {"strict": True}, "strict_data": False}) is True
+        assert _resolve_strict_flag({"data_validation": {"strict": False}, "strict_data": True}) is False
+        assert _resolve_strict_flag({"strict_data": True}) is True
+        assert _resolve_strict_flag({"strict_mode": True}) is True
+        assert _resolve_strict_flag({}) is False
+

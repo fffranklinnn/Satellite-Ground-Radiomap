@@ -110,16 +110,44 @@ def load_config(config_path: Path) -> dict:
         return yaml.safe_load(f)
 
 
+def _resolve_strict_flag(config: dict) -> bool:
+    """
+    Merge strict-mode settings from multiple config locations.
+
+    Priority (highest to lowest):
+      1. config["data_validation"]["strict"]
+      2. config["strict_data"]
+      3. config["strict_mode"]
+    Returns False when none are set.
+    """
+    dv = config.get("data_validation", {})
+    if isinstance(dv, dict) and "strict" in dv:
+        return bool(dv["strict"])
+    if "strict_data" in config:
+        return bool(config["strict_data"])
+    if "strict_mode" in config:
+        return bool(config["strict_mode"])
+    return False
+
+
 def build_layers(config: dict, origin_lat: float, origin_lon: float,
                  enable_l1: bool, enable_l2: bool, enable_l3: bool):
+    """Build layer objects, propagating the resolved strict flag into each sub-config."""
+    strict = _resolve_strict_flag(config)
     l1_layer = l2_layer = l3_layer = None
     layers_cfg = config.get("layers", {})
     if enable_l1 and layers_cfg.get("l1_macro", {}).get("enabled", False):
-        l1_layer = L1MacroLayer(layers_cfg["l1_macro"], origin_lat, origin_lon)
+        l1_cfg = copy.copy(layers_cfg["l1_macro"])
+        l1_cfg["strict_data"] = strict
+        l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
     if enable_l2 and layers_cfg.get("l2_topo", {}).get("enabled", False):
-        l2_layer = L2TopoLayer(layers_cfg["l2_topo"], origin_lat, origin_lon)
+        l2_cfg = copy.copy(layers_cfg["l2_topo"])
+        l2_cfg["strict_data"] = strict
+        l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon)
     if enable_l3 and layers_cfg.get("l3_urban", {}).get("enabled", False):
-        l3_layer = L3UrbanLayer(layers_cfg["l3_urban"], origin_lat, origin_lon)
+        l3_cfg = copy.copy(layers_cfg["l3_urban"])
+        l3_cfg["strict_data"] = strict
+        l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon)
     return l1_layer, l2_layer, l3_layer
 
 
@@ -189,14 +217,17 @@ def check_manifest_fields(
         "ac": "AC-6 / AC-7",
     })
 
-    # AC-6: input_file_hashes keys match golden manifest input_files keys
-    golden_input_keys = set(golden_manifest.get("input_files", {}).keys())
-    actual_input_keys = set(dict(manifest.input_file_hashes).keys())
+    # AC-6: input_file_hashes values match golden manifest input_files sha256 values
+    golden_input_files = golden_manifest.get("input_files", {})
+    golden_input_hashes = {k: v.get("sha256", "") for k, v in golden_input_files.items()
+                           if isinstance(v, dict)}
+    actual_input_hashes = dict(manifest.input_file_hashes)
+    hashes_match = actual_input_hashes == golden_input_hashes
     checks.append({
-        "field": f"{scene_label}/input_file_hashes_keys_match_golden",
-        "actual": sorted(actual_input_keys),
-        "reference": sorted(golden_input_keys),
-        "passed": actual_input_keys == golden_input_keys,
+        "field": f"{scene_label}/input_file_hashes_match_golden",
+        "actual": actual_input_hashes,
+        "reference": golden_input_hashes,
+        "passed": hashes_match,
         "ac": "AC-6",
     })
 
@@ -286,6 +317,22 @@ def run_scene(
         product_types=scene_product_types,
     )
 
+    # Capture typed states for runtime linkage checks (AC-4/AC-7).
+    # Run the pipeline once more directly to get intermediate state objects.
+    _typed_states: Dict[str, Any] = {}
+    if timestamps:
+        _frame = fb.build(timestamps[0])
+        _entry = l1_layer.propagate_entry(_frame) if l1_layer else None
+        _terrain = l2_layer.propagate_terrain(_frame, entry=_entry) if l2_layer else None
+        _urban = l3_layer.refine_urban(_frame, entry=_entry) if l3_layer else None
+        _typed_states = {
+            "frame_id": _frame.frame_id,
+            "grid": _frame.grid,
+            "entry": _entry,
+            "terrain": _terrain,
+            "urban": _urban,
+        }
+
     comparisons: List[Dict[str, Any]] = []
     manifest_checks: List[Dict[str, Any]] = []
 
@@ -334,17 +381,19 @@ def run_scene(
             "actual": str(pt_files[0]) if pt_files else None,
         })
 
-    # AC-1/AC-4: shape check for all exported products + typed-state invariants
+    # AC-1/AC-4: shape check for all exported products + runtime typed-state linkage
     expected_shape = (256, 256)
-    # Products that require specific states to be non-None
-    _state_requirements = {
-        "path_loss_map": [],  # composite — always valid
-        "visibility_mask": ["l1"],
-        "elevation_field": ["l1"],
-        "azimuth_field": ["l1"],
-        "terrain_blockage": ["l2"],
-        "urban_residual": ["l3"],
+    # Map product type → required typed state attribute in _typed_states
+    _state_attr = {
+        "path_loss_map": None,       # composite — no single state required
+        "visibility_mask": "entry",
+        "elevation_field": "entry",
+        "azimuth_field": "entry",
+        "terrain_blockage": "terrain",
+        "urban_residual": "urban",
     }
+    frame_id = _typed_states.get("frame_id", "")
+    frame_grid = _typed_states.get("grid")
     for pt in scene_product_types:
         pt_files = sorted(scene_dir.glob(f"*{pt}.npy"))
         if not pt_files:
@@ -358,14 +407,34 @@ def run_scene(
             "expected_shape": list(expected_shape),
             "ac": "AC-1 / AC-4",
         })
-        # Typed-state invariant: product is only present when required state is enabled
-        required_states = _state_requirements.get(pt, [])
-        states_present = all(layer_flags.get(s, False) for s in required_states)
+        # Runtime typed-state linkage: verify the required state object has the
+        # same frame_id and grid as the frame that produced this product.
+        attr = _state_attr.get(pt)
+        if attr is None:
+            # path_loss_map: just verify frame_id is non-empty
+            state_ok = bool(frame_id)
+            state_detail = {"frame_id": frame_id}
+        else:
+            state_obj = _typed_states.get(attr)
+            if state_obj is None:
+                state_ok = False
+                state_detail = {"error": f"required state '{attr}' is None"}
+            else:
+                fid_match = getattr(state_obj, "frame_id", None) == frame_id
+                grid_match = getattr(state_obj, "grid", None) == frame_grid
+                state_ok = fid_match and grid_match
+                state_detail = {
+                    "state_type": type(state_obj).__name__,
+                    "state_frame_id": getattr(state_obj, "frame_id", None),
+                    "frame_frame_id": frame_id,
+                    "frame_id_match": fid_match,
+                    "grid_match": grid_match,
+                }
         comparisons.append({
-            "name": f"{scene_label}/product_state_contract/{pt}",
-            "passed": states_present,
-            "required_states": required_states,
-            "layer_flags": dict(layer_flags),
+            "name": f"{scene_label}/product_typed_state_linkage/{pt}",
+            "passed": state_ok,
+            "required_state": attr,
+            "detail": state_detail,
             "ac": "AC-4 / AC-7",
         })
 

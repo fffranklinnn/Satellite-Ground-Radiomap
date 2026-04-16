@@ -9,6 +9,8 @@ This module provides fundamental RF propagation formulas including:
 - Phased array antenna gain (merged from branch_L1)
 """
 
+from typing import Optional
+
 import numpy as np
 
 # ── Physical constants (merged from branch_L1) ────────────────────────────────
@@ -90,11 +92,13 @@ def rain_specific_attenuation_db_per_km(frequency_ghz,
     rain = np.asarray(rain_rate_mm_h, dtype=float)
     el = np.asarray(elevation_angle_deg, dtype=float)
 
+    # Interpolate ITU-style horizontal/vertical coefficients to target freq.
     k_h, a_h, k_v, a_v = _rain_coefficients(freq)
 
     cos_el_sq = np.cos(np.radians(np.clip(el, 0.0, 90.0))) ** 2
     cos_2tau = np.cos(2.0 * np.radians(float(polarization_tilt_deg)))
 
+    # Blend H/V polarization components to equivalent link polarization.
     k = 0.5 * (k_h + k_v + (k_h - k_v) * cos_el_sq * cos_2tau)
     k = np.maximum(k, 1e-10)
 
@@ -128,6 +132,7 @@ def rain_attenuation_slant_path_db(elevation_angle_deg,
     el_safe = np.clip(el, 0.1, 90.0)
     sin_el = np.sin(np.radians(el_safe))
 
+    # Effective rain layer depth above station.
     rain_layer_km = max(float(rain_height_km) - float(station_alt_km), 0.1)
     slant_len_km = rain_layer_km / sin_el
 
@@ -140,6 +145,7 @@ def rain_attenuation_slant_path_db(elevation_angle_deg,
 
     freq_safe = np.maximum(freq, 1e-3)
     term = np.maximum(slant_len_km * gamma_r / freq_safe, 0.0)
+    # Empirical reduction factor approximates inhomogeneous rain cell effects.
     reduction = 1.0 / (
         1.0 +
         0.78 * np.sqrt(term) -
@@ -176,6 +182,7 @@ def atmospheric_loss(elevation_angle_deg, frequency_ghz, rain_rate_mm_h=0.0):
     path_factor = 1.0 / np.sin(np.radians(el_safe))
 
     # Baseline gaseous attenuation (clear-sky), frequency dependent.
+    # This is an engineering approximation, not a full line-by-line model.
     dry_zenith = 0.035 * (freq / 10.0)
     wet_zenith = 0.012 * (freq / 10.0)
     atm_loss = (dry_zenith + wet_zenith) * path_factor
@@ -220,7 +227,7 @@ def atmospheric_loss_era5(elevation_angle_deg, frequency_ghz, iwv_kg_m2, rain_ra
     el_safe = np.clip(el, 5.0, 90.0)
     sin_el = np.sin(np.radians(el_safe))
 
-    # Scale dry/wet zenith with frequency (relative to 10 GHz reference)
+    # Convert ERA5 IWV to wet-zenith attenuation and scale to operating freq.
     freq_scale = (freq / 10.0)
     dry_zenith = 0.046 * freq_scale
     wet_zenith = 0.0173 * iwv * freq_scale
@@ -385,6 +392,35 @@ def gaussian_beam_gain_db(theta_az_deg: np.ndarray,
         (theta_az_deg / hpbw_az_deg) ** 2 +
         (theta_el_deg / hpbw_el_deg) ** 2
     )
+
+
+def parabolic_rolloff_gain_db(theta_deg: np.ndarray,
+                              peak_gain_db: float,
+                              theta_3db_deg: float,
+                              min_gain_db: Optional[float] = None) -> np.ndarray:
+    """
+    Axisymmetric antenna roll-off model.
+
+    G(θ) = G_peak - 3·(θ / θ_3dB)^2  (dB)
+
+    This form is convenient for satellite beam-footprint rendering because it
+    produces smooth off-axis contours and preserves the 3 dB point explicitly.
+
+    Args:
+        theta_deg:     Off-axis angle from boresight in degrees (ndarray)
+        peak_gain_db:  Peak boresight gain in dBi
+        theta_3db_deg: Off-axis 3 dB angle in degrees
+        min_gain_db:   Optional gain floor (dBi)
+
+    Returns:
+        Antenna gain array in dBi (same shape as theta_deg)
+    """
+    theta = np.maximum(np.asarray(theta_deg, dtype=float), 0.0)
+    theta_3db = max(float(theta_3db_deg), 1e-6)
+    gain = float(peak_gain_db) - 3.0 * (theta / theta_3db) ** 2
+    if min_gain_db is not None:
+        gain = np.maximum(gain, float(min_gain_db))
+    return gain
 
 
 def phased_array_peak_gain_db(n_elements: int,

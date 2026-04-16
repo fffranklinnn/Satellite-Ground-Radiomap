@@ -16,49 +16,57 @@ parts/
 sdist/
 var/
 wheels/
-pip-wheel-metadata/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # Virtual environments
 venv/
 ENV/
 env/
-.venv
 
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Jupyter
+.ipynb_checkpoints/
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
+# Data files
+*.nc
+*.gz
+*.tle
+*.parquet
+*.npy
+*.zip
+*.tif
+*.ovr
+
+# Large data directories
+data/l1_space/data/era5_*/
+data/l2_topo/*.tif
+data/l2_topo/*.ovr
+data/l3_urban/*/
+
+# Output
+output/
+*.png
+*.jpg
+*.pdf
 
 # Logs
 *.log
-logs/
+sg_mrm.log
 
-# Output directories
-output/
-results/
+# OS
+.DS_Store
+Thumbs.db
 
-# ── Collaborator branch working directories (already merged into src/) ──
-branch_L1/
-branch_L2/
-branch_L3/
+# Claude
+.claude/
 
 # ── Raw / bulk data downloads ──
 cddis_data_2025/
@@ -110,3 +118,5 @@ benchmarks/baselines/regression_run_repro/
 *.bak
 .cache/
 .humanize*
+# Pytest
+.pytest_cache/

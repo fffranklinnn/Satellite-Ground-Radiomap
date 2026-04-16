@@ -106,7 +106,7 @@ More script details: [scripts/README.md](scripts/README.md)
 | TLE | `data/2025_0101.tle` | Main satellite ephemeris source for Jan 1, 2025 runs |
 | IONEX | `data/l1_space/data/*.INX.gz` | TEC maps for ionosphere |
 | ERA5 pressure-level | `data/l1_space/data/*.nc` | IWV extraction (`q` integration) |
-| DEM | `data/l2_topo/全国DEM数据.tif` | L2 terrain blockage |
+| DEM | `data/l2_topo/china_dem_30m.tif` | L2 terrain blockage |
 | L3 raw source | `data/l3_urban/shanxisheng/陕西省/*.shp` | Province-wide raw building vector source |
 | L3 runnable cache | `data/l3_urban/xian/tiles_60/` | Ready-to-run Xi'an building cache |
 
@@ -122,14 +122,14 @@ Satellite-Ground-Radiomap/
 ├── tests/           # Unit tests
 ├── examples/        # Legacy demos
 ├── output/          # Generated artifacts (gitignored)
-└── branch_L1/L2/L3/ # Local historical branch snapshots (gitignored)
+└── change/          # Local historical snapshot area (non-runtime)
 ```
 
 Practical optimization recommendations:
 
-1. Keep `src/` as the single runtime source of truth; avoid editing `branch_*` trees.
-2. Keep all heavy artifacts under `output/` and data downloads under `data/` or `cddis_data_2025/` (already gitignored).
-3. For long-term cleanliness, archive or remove local `branch_*` snapshots once no longer needed.
+1. Keep `src/` as the single runtime source of truth; avoid editing historical snapshot trees.
+2. Keep all heavy artifacts under `output/` and data downloads under `data/` (use `data/l1_space/data/cddis_data_2025/` for yearly IONEX archives; already gitignored).
+3. For long-term cleanliness, archive or remove local historical snapshots once no longer needed.
 4. Prefer script-based reproducibility (`scripts/`) over ad-hoc notebook outputs.
 
 ## 7. Documentation Map
@@ -138,6 +138,7 @@ Practical optimization recommendations:
 - Quick start: [docs/QUICKSTART.md](docs/QUICKSTART.md)
 - Config schema: [configs/README.md](configs/README.md)
 - Data and acquisition: [data/README.md](data/README.md)
+- Source tree index: [src/README.md](src/README.md)
 - Layer implementation notes: [src/layers/README.md](src/layers/README.md)
 - L3 cache tooling: [tools/README.md](tools/README.md)
 - Utility modules: [src/utils/README.md](src/utils/README.md)

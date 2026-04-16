@@ -1,61 +1,75 @@
-# scripts 说明
+# scripts 目录说明
 
-本目录包含可直接执行的实验脚本与图像生成脚本。
+本目录提供项目级运行入口，负责把 `src/` 能力组织成可直接执行的任务（单次仿真、拼接、批量实验、后处理与诊断）。
 
-## 1. 主入口类型
+## 1. 目录角色
 
-### A. 单次结果生成
+- 统一命令行入口，减少手工调用底层模块的复杂度
+- 沉淀可复现实验流程（参数、输出结构、日志）
+- 面向论文图、批处理数据集与工程诊断的不同场景
+
+## 2. 当前文件清单
+
+### 核心仿真与拼接
 
 - `generate_full_radiomap.py`
-  - 单时间、单位置，生成全物理叠加图
-  - 可附带分量图与 `.npy` 导出
-- `generate_multisat_timeseries_radiomap.py`
-  - 多星、长时序逐帧生成（每帧多星融合）
-  - 支持 `best-server` 与 `soft-combine` 融合
-  - 固定输出：`png/` + `npy/` + `frame_json/` + `manifest.jsonl`
-- `generate_global_map.py`
-  - 直接基于物理函数生成全球分布图
-- `generate_l1_map.py`
-  - L1 时序图与参数扫描图
-
-### B. 区域拼接
-
+  - 单时刻、单位置全物理叠加图（L1+L2+L3）
+- `generate_l1l2_radiomap.py`
+  - L1+L2 组合仿真与可视化
 - `generate_xian_city_radiomap.py`
-  - 按 tile list 拼接西安城市级图
+  - 西安 tile 级拼接；支持 Top-K 卫星与数据集 prototype 导出
 - `generate_xian_full_from_shapefile.py`
-  - 从西安 shapefile 自动生成全域 tile list + L3 cache + radiomap（一键）
-- `generate_multisat_timeseries_radiomap.py`
-  - 多卫星长时序数据集生成（PNG + NPY + frame JSON + manifest JSONL）
+  - 从 shp 到 tile list/cache/城市图的一键流水线
 - `generate_shaanxi_radiomap.py`
-  - 按省域网格拼接陕西 L2 地形图（带进度/ETA）
+  - 省域 L2 拼接（带进度与 ETA）
+- `generate_multisat_timeseries_radiomap.py`
+  - 多星长时序帧生成（best-server/soft-combine）
 
-### C. 批量实验与可见星分析
+### 批量实验与参数扫描
 
 - `batch_city_experiments.py`
-  - 批量参数扫描（时间/频率/雨率）
-  - 输出实验索引 CSV/JSON
-  - 支持并发 worker 与 GPU ID 轮转绑定（调度层）
-- `report_satellite_visibility.py`
-  - 统计某地某时段可见星数量与 Top-K
-- `check_data_integrity.py`
-  - 按配置检查数据完整性（可 strict 模式）
+  - 时间/频率/雨率批量扫描，生成实验索引
+- `batch_generate_all.py`
+  - 预设任务全集批量运行脚本
 
-### D. 展示与后处理
+### 专题图与展示
 
 - `generate_feature_showcase.py`
-  - 一次生成三类展示图：`terrain/`, `atmosphere/`, `radiomap/`
-- `visualize_batch.py`
-  - 将 batch 目录中的 `.npy` 转成 PNG 预览
-- `postprocess_xian_timeseries.py`
-  - 对西安小时级全域结果做后处理：分量帧图、时序大拼图、GIF
-- `batch_generate_all.py`
-  - 预设任务集批量跑图
+  - 地形/大气/radiomap 三类展示图
+- `generate_global_map.py`
+  - 全球分布图
 - `generate_global_comparison.py`
-  - 六城市对比图
+  - 多城市对比图
+- `generate_l1_map.py`
+  - L1 时序与参数变化展示
+- `generate_beam_dwell.py`
+  - 波束凝视/驻留场景分析
 
-## 2. 常用命令
+### 数据校验、后处理与诊断
 
-### 全物理单图
+- `check_data_integrity.py`
+  - 运行前数据依赖检查
+- `report_satellite_visibility.py`
+  - 可见星统计报表
+- `postprocess_xian_timeseries.py`
+  - 时序结果后处理（拼图、GIF）
+- `visualize_batch.py`
+  - 批量将 `.npy` 渲染为 PNG
+- `debug_sinr.py`
+  - 多星 SINR 调试脚本
+- `test_multisat_sinr.py`
+  - 多星 SINR 快速验证脚本
+
+### 辅助文件
+
+- `__init__.py`
+  - 包导入占位
+- `generate_xian_city_radiomap.py.pre_p1_backup`
+  - 历史备份文件（非主运行入口）
+
+## 3. 常用命令
+
+### 单次全物理仿真
 
 ```bash
 python scripts/generate_full_radiomap.py \
@@ -64,7 +78,16 @@ python scripts/generate_full_radiomap.py \
   --show-decomposition
 ```
 
-### 多星长时序（逐帧融合）
+### 西安城市级拼接
+
+```bash
+python scripts/generate_xian_city_radiomap.py \
+  --config configs/mission_config.yaml \
+  --timestamp 2025-01-01T06:00:00 \
+  --output-dir output/xian_city_radiomap
+```
+
+### 多星长时序
 
 ```bash
 python scripts/generate_multisat_timeseries_radiomap.py \
@@ -73,11 +96,10 @@ python scripts/generate_multisat_timeseries_radiomap.py \
   --end 2025-01-01T03:00:00 \
   --step-minutes 30 \
   --fusion-mode best-server \
-  --max-satellites 6 \
-  --output-dir output/multisat_timeseries_demo
+  --max-satellites 6
 ```
 
-### 西安批量实验（含并发与 GPU 轮转）
+### 批量参数扫描
 
 ```bash
 python scripts/batch_city_experiments.py \
@@ -86,108 +108,25 @@ python scripts/batch_city_experiments.py \
   --step-hours 1 \
   --freqs-ghz 14.5 \
   --rain-rates 0,10 \
-  --top-k-sats 10 \
-  --sat-workers 8 \
-  --workers 4 \
-  --gpu-ids 0,1,2,3 \
-  --output-root output/city_batch_demo
+  --workers 4
 ```
 
-### 陕西省地形拼接（进度可见）
-
-```bash
-python scripts/generate_shaanxi_radiomap.py \
-  --timestamp 2025-01-01T06:00:00 \
-  --sat-elevation-deg 12 \
-  --sat-azimuth-deg 180 \
-  --output-dir output/shaanxi_radiomap
-```
-
-### 西安 shapefile 全域一键生成
-
-```bash
-python scripts/generate_xian_full_from_shapefile.py \
-  --xian-shp data/l3_urban/shanxisheng/陕西省/processed_xian20221010_all.shp \
-  --catalog data/l3_urban/xian/catalog/buildings_xian.parquet \
-  --tile-size-m 1024 \
-  --timestamp 2025-01-01T12:00:00 \
-  --output-root output/xian_full_from_shp
-```
-
-### 多卫星长时序数据集（推荐）
-
-```bash
-python scripts/generate_multisat_timeseries_radiomap.py \
-  --config configs/mission_config.yaml \
-  --start 2025-01-01T00:00:00 \
-  --end 2025-01-01T23:00:00 \
-  --step-minutes 60 \
-  --fusion-mode soft-combine \
-  --max-satellites 3 \
-  --output-dir output/xian_multisat_timeseries
-```
-
-### 功能展示图
-
-```bash
-python scripts/generate_feature_showcase.py \
-  --config configs/mission_config.yaml \
-  --timestamp 2025-01-01T06:00:00 \
-  --output-root output/feature_showcase_demo \
-  --output-tag xian_demo
-```
-
-### 数据完整性检查
+### 数据检查
 
 ```bash
 python scripts/check_data_integrity.py \
   --config configs/mission_config.yaml \
-  --strict \
-  --output-json output/data_check/report.json
+  --strict
 ```
 
-### 西安时序后处理（分量图 + 拼图 + GIF）
+## 4. 输出约定
 
-```bash
-python scripts/postprocess_xian_timeseries.py \
-  --batch-root output/xian_hourly_full_components_20250101 \
-  --panel-cols 6 \
-  --fps 2 \
-  --output-dir output/xian_hourly_full_components_20250101/timeseries_visuals
-```
+- 大多数脚本默认将结果写入 `output/` 下的任务子目录。
+- 时序脚本通常输出 `png/`、`npy/`、`frame_json/` 与 `manifest.jsonl`。
+- 批处理脚本通常输出 `experiment_index.csv/json` 便于回溯。
 
-## 3. 运行环境建议
+## 5. 维护建议
 
-- 推荐在 `sgmrm_test` 或等价环境运行。
-- 大规模拼接/批量实验建议：
-  1. 先用 `--max-tiles` 小规模验证。
-  2. 再放开全量任务。
-  3. 使用 `--skip-existing` 支持续跑。
-
-## 4. 关于 GPU 参数
-
-- `batch_city_experiments.py` 的 `--gpu-ids` 目前用于任务级 `CUDA_VISIBLE_DEVICES` 绑定。
-- 当前核心计算仍以 `numpy/scipy` 为主，GPU 性能收益取决于你是否引入 GPU 内核。
-
-## 5. 输出约定
-
-不同脚本会在对应输出目录保存：
-
-- 主要结果图（`.png`）
-- 数组结果（`.npy`）
-- 元信息索引（`.csv`/`.json`，仅批处理脚本）
-
-建议将输出统一放在 `output/` 下，方便清理与归档。
-
-`generate_multisat_timeseries_radiomap.py` 的输出结构固定为：
-
-```text
-<output-dir>/
-  manifest.jsonl
-  png/
-    <prefix>_<frame_idx>_<timestamp>.png
-  npy/
-    <prefix>_<frame_idx>_<timestamp>.npy
-  frame_json/
-    <prefix>_<frame_idx>_<timestamp>.json
-```
+1. 入口脚本只负责编排，核心算法尽量下沉到 `src/`。
+2. 新脚本加入后，必须同步更新本 README 的“文件清单”。
+3. 历史备份脚本建议显式标注 `backup`/`legacy`，避免误用。

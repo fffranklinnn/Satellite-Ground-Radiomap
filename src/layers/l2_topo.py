@@ -48,7 +48,7 @@ class L2TopoLayer(BaseLayer):
     GRID_SIZE           = 256
     RESOLUTION_M        = 100.0
     COVERAGE_M          = GRID_SIZE * RESOLUTION_M   # 25,600 m = 25.6 km
-    DEM_LAT_MIN, DEM_LAT_MAX = 15.0, 57.0   # National DEM coverage (全国DEM数据.tif)
+    DEM_LAT_MIN, DEM_LAT_MAX = 15.0, 57.0   # National DEM coverage (china_dem_30m.tif)
     DEM_LON_MIN, DEM_LON_MAX = 73.0, 139.0  # National DEM coverage
     DIFFRACTION_LOSS_DB = 20.0
     MAX_DIFFRACTION_LOSS_DB = 60.0
@@ -160,30 +160,33 @@ class L2TopoLayer(BaseLayer):
         sat_azimuth_deg = float(ctx.extras.get("satellite_azimuth_deg", self.sat_azimuth_deg))
         sat_slant_range_km = ctx.extras.get("satellite_slant_range_km")
         sat_altitude_km = float(ctx.extras.get("satellite_altitude_km", self.satellite_altitude_km))
+        padding_m = max(float(ctx.extras.get("padding_m", ctx.extras.get("l2_padding_m", 0.0))), 0.0)
         if sat_slant_range_km is None:
             sat_slant_range_km = self._estimate_slant_range_km(sat_elevation_deg, sat_altitude_km)
         sat_slant_range_m = max(float(sat_slant_range_km) * 1000.0, 1.0)
 
-        self.logger.info(f"[L2] compute @ ({origin_lat:.4f}N, {origin_lon:.4f}E)")
-        self._validate_bounds(origin_lat, origin_lon)
+        self.logger.info(f"[L2] compute @ ({origin_lat:.4f}N, {origin_lon:.4f}E) | padding={padding_m:.1f} m")
+        self._validate_bounds(origin_lat, origin_lon, padding_m=padding_m)
 
-        dem_grid = self._load_dem_patch(origin_lat, origin_lon)
+        dem_grid, core_rows, core_cols = self._load_dem_patch_with_padding(origin_lat, origin_lon, padding_m=padding_m)
         occlusion_mask, excess_height_m, obstacle_distance_m = self._compute_occlusion_vectorized(
             dem_grid,
             sat_elevation_deg=sat_elevation_deg,
             sat_azimuth_deg=sat_azimuth_deg,
             return_profile=True,
         )
-        loss_db = self._apply_diffraction_loss(
+        loss_db_full = self._apply_diffraction_loss(
             dem=dem_grid,
             mask=occlusion_mask,
             excess_height_m=excess_height_m,
             obstacle_distance_m=obstacle_distance_m,
             sat_slant_range_m=sat_slant_range_m,
         )
+        loss_db = loss_db_full[core_rows, core_cols]
+        core_occlusion = occlusion_mask[core_rows, core_cols]
 
         self.logger.info(
-            f"[L2] Done | occluded={occlusion_mask.mean()*100:.1f}% | "
+            f"[L2] Done | occluded={core_occlusion.mean()*100:.1f}% | "
             f"loss={loss_db.min():.1f}~{loss_db.max():.1f} dB"
         )
         return loss_db
@@ -195,17 +198,40 @@ class L2TopoLayer(BaseLayer):
 
     def _load_dem_patch(self, origin_lat: float, origin_lon: float) -> np.ndarray:
         """Read only the 25.6 km tile; resample 30 m -> 100 m/px on-the-fly."""
+        data, _, _ = self._load_dem_patch_with_padding(origin_lat, origin_lon, padding_m=0.0)
+        return data
+
+    def _load_dem_patch_with_padding(self,
+                                     origin_lat: float,
+                                     origin_lon: float,
+                                     padding_m: float = 0.0):
+        """
+        Read a DEM tile with an optional overlap buffer and return crop slices.
+
+        The returned DEM is sampled at the native L2 resolution (100 m/px). When
+        padding is requested, callers should compute occlusion on the full padded
+        raster and only emit the central core indexed by the returned slices.
+        """
         from rasterio.windows import from_bounds
         from rasterio.enums import Resampling
 
         self._open_dem()
 
-        center_lat = origin_lat + 0.5 * (self.COVERAGE_M / 111_000)
-        delta_lat  = self.COVERAGE_M / 111_000
-        delta_lon  = self.COVERAGE_M / (111_000 * np.cos(np.radians(center_lat)))
+        pad_px = int(np.ceil(max(float(padding_m), 0.0) / self.RESOLUTION_M))
+        effective_padding_m = pad_px * self.RESOLUTION_M
+        coverage_m = self.COVERAGE_M + 2.0 * effective_padding_m
+        out_size = self.GRID_SIZE + 2 * pad_px
 
-        west, east   = origin_lon, origin_lon + delta_lon
-        south, north = origin_lat, origin_lat + delta_lat
+        center_lat = origin_lat + 0.5 * (self.COVERAGE_M / 111_000)
+        delta_lat = coverage_m / 111_000
+        delta_lon = coverage_m / (111_000 * np.cos(np.radians(center_lat)))
+        pad_lat = effective_padding_m / 111_000
+        pad_lon = effective_padding_m / (111_000 * np.cos(np.radians(center_lat)))
+
+        west = origin_lon - pad_lon
+        east = west + delta_lon
+        south = origin_lat - pad_lat
+        north = south + delta_lat
 
         window = from_bounds(
             left=west, bottom=south, right=east, top=north,
@@ -214,7 +240,7 @@ class L2TopoLayer(BaseLayer):
         data = self._src.read(
             1,
             window=window,
-            out_shape=(self.GRID_SIZE, self.GRID_SIZE),
+            out_shape=(out_size, out_size),
             resampling=Resampling.bilinear
         ).astype(np.float32)
 
@@ -223,7 +249,10 @@ class L2TopoLayer(BaseLayer):
         nodata = self._src.nodata
         if nodata is not None:
             data[data == nodata] = 0.0
-        return data
+
+        core_rows = slice(pad_px, pad_px + self.GRID_SIZE)
+        core_cols = slice(pad_px, pad_px + self.GRID_SIZE)
+        return data, core_rows, core_cols
 
     def _compute_occlusion_vectorized(self,
                                       dem: np.ndarray,
@@ -318,7 +347,7 @@ class L2TopoLayer(BaseLayer):
         When occlusion profile is unavailable, fall back to fixed loss.
         """
         if excess_height_m is None or obstacle_distance_m is None:
-            loss = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
+            loss = np.zeros(dem.shape, dtype=np.float32)
             loss[mask] = self.DIFFRACTION_LOSS_DB
             return loss
 
@@ -342,20 +371,25 @@ class L2TopoLayer(BaseLayer):
         )
         knife_edge_loss = np.clip(knife_edge_loss, 0.0, self.MAX_DIFFRACTION_LOSS_DB)
 
-        loss = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
+        loss = np.zeros(dem.shape, dtype=np.float32)
         loss[mask] = knife_edge_loss[mask].astype(np.float32)
         return loss
 
-    def _validate_bounds(self, origin_lat: float, origin_lon: float):
+    def _validate_bounds(self, origin_lat: float, origin_lon: float, padding_m: float = 0.0):
+        center_lat = origin_lat + 0.5 * (self.COVERAGE_M / 111_000)
+        pad_lat = max(float(padding_m), 0.0) / 111_000
+        pad_lon = max(float(padding_m), 0.0) / (111_000 * np.cos(np.radians(center_lat)))
         delta_lat = self.COVERAGE_M / 111_000
-        delta_lon = self.COVERAGE_M / (111_000 * np.cos(np.radians(origin_lat)))
-        north = origin_lat + delta_lat
-        east  = origin_lon + delta_lon
-        if (origin_lat < self.DEM_LAT_MIN or north > self.DEM_LAT_MAX or
-                origin_lon < self.DEM_LON_MIN or east  > self.DEM_LON_MAX):
+        delta_lon = self.COVERAGE_M / (111_000 * np.cos(np.radians(center_lat)))
+        north = origin_lat + delta_lat + pad_lat
+        east  = origin_lon + delta_lon + pad_lon
+        south = origin_lat - pad_lat
+        west = origin_lon - pad_lon
+        if (south < self.DEM_LAT_MIN or north > self.DEM_LAT_MAX or
+                west < self.DEM_LON_MIN or east  > self.DEM_LON_MAX):
             raise ValueError(
-                f"[L2] Requested area ({origin_lat:.2f}~{north:.2f}N, "
-                f"{origin_lon:.2f}~{east:.2f}E) is outside Shaanxi DEM coverage "
+                f"[L2] Requested area ({south:.2f}~{north:.2f}N, "
+                f"{west:.2f}~{east:.2f}E) is outside Shaanxi DEM coverage "
                 f"({self.DEM_LAT_MIN}~{self.DEM_LAT_MAX}N, "
                 f"{self.DEM_LON_MIN}~{self.DEM_LON_MAX}E)."
             )

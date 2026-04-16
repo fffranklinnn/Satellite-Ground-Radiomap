@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import json
 import math
 import sys
 from datetime import datetime, timezone
@@ -42,8 +43,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--norad-id", action="append", default=None,
                         help="Limit candidate satellites to specific NORAD ID; can be repeated")
+    parser.add_argument("--target-sat-id", type=str, default=None,
+                        help="Force a single target satellite NORAD ID and bypass Top-K selection")
     parser.add_argument("--top-k-sats", type=int, default=1,
                         help="Use top-K visible satellites by elevation at city center (default: 1)")
+    parser.add_argument("--force-low-elevation", action="store_true",
+                        help="Restrict satellite selection to a low-elevation band for terrain-shadow studies")
+    parser.add_argument("--min-elevation-deg", type=float, default=None,
+                        help="Minimum center-point satellite elevation filter")
+    parser.add_argument("--max-elevation-deg", type=float, default=None,
+                        help="Maximum center-point satellite elevation filter")
+    parser.add_argument("--l2-padding-m", type=float, default=0.0,
+                        help="DEM overlap buffer in metres for L2 tile-edge continuity")
+    parser.add_argument("--antenna-pattern-model", type=str, default=None,
+                        help="Optional L1 antenna pattern override (e.g. parabolic_rolloff, legacy_gaussian)")
+    parser.add_argument("--theta-3db-deg", type=float, default=None,
+                        help="Optional L1 off-axis 3 dB angle override in degrees")
+    parser.add_argument("--antenna-max-rolloff-db", type=float, default=None,
+                        help="Optional cap on antenna roll-off relative to peak gain")
     parser.add_argument("--sat-workers", type=int, default=1,
                         help="Parallel workers for per-tile top-K satellite evaluation (default: 1)")
     parser.add_argument("--max-tiles", type=int, default=None,
@@ -55,6 +72,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--legacy-l2-origin", action="store_true",
                         help="Use legacy L2 origin (tile origin as 25.6km SW corner). "
                              "Default uses center-aligned L2 patch for each tile.")
+    parser.add_argument("--dataset-prototype-out", type=str, default=None,
+                        help="Optional output root for one tile-level dataset prototype sample")
+    parser.add_argument("--dataset-sample-id", type=str, default=None,
+                        help="Optional explicit sample_id override for dataset prototype export")
+    parser.add_argument("--rain-rate-mm-h", type=float, default=None,
+                        help="Optional L1 rain-rate override for matched prototype condition export")
     return parser.parse_args()
 
 
@@ -70,6 +93,59 @@ def parse_timestamp(ts_str: Optional[str], config: Dict) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _slug_float(value: float) -> str:
+    return f"{float(value):g}".replace("-", "m").replace(".", "p")
+
+
+def _append_manifest_jsonl(path: Path, record: Dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _refresh_manifest_annotations(path: Path) -> None:
+    if not path.exists():
+        return
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not records:
+        return
+
+    core_axes = ["tile_id", "timestamp_utc", "satellite_norad_id", "frequency_ghz", "rain_rate_mm_h"]
+    sweep_axes = ["rain_rate_mm_h", "satellite_norad_id", "timestamp_utc"]
+
+    for rec in records:
+        sample_id = str(rec.get("sample_id", ""))
+        rec["scenario_id"] = sample_id.split("__", 1)[1] if "__" in sample_id else sample_id
+        rec.setdefault("split_reason", "manual-pilot" if rec.get("split") == "pilot" else "unspecified")
+        rec["condition_axes"] = []
+        rec["condition_groups"] = []
+
+    for axis in sweep_axes:
+        groups = {}
+        for idx, rec in enumerate(records):
+            key = tuple((field, rec.get(field)) for field in core_axes if field != axis)
+            groups.setdefault(key, []).append(idx)
+
+        for key, idxs in groups.items():
+            values = {records[i].get(axis) for i in idxs}
+            if len(idxs) <= 1 or len(values) <= 1:
+                continue
+            group_tokens = [f"axis-{axis}"]
+            for field, value in key:
+                token = str(value).replace(" ", "_")
+                group_tokens.append(f"{field}-{token}")
+            group_id = "pilotgrp__" + "__".join(group_tokens)
+            for i in idxs:
+                records[i]["condition_axes"].append(axis)
+                records[i]["condition_groups"].append(group_id)
+
+    for rec in records:
+        rec["condition_axes"] = sorted(set(rec["condition_axes"]))
+        rec["condition_groups"] = sorted(set(rec["condition_groups"]))
+
+    path.write_text("".join(json.dumps(rec, ensure_ascii=False) + "\n" for rec in records), encoding="utf-8")
 
 
 def _geo_ticks_for_mosaic(ax, rows: int, cols: int,
@@ -167,9 +243,21 @@ def main() -> None:
     lat_north = float(y_vals.max() + y_step)
 
     layers_cfg = config["layers"]
-    l1_cfg = layers_cfg["l1_macro"]
-    l2_cfg = layers_cfg["l2_topo"]
-    l3_cfg = layers_cfg["l3_urban"]
+    l1_cfg = dict(layers_cfg["l1_macro"])
+    l2_cfg = dict(layers_cfg["l2_topo"])
+    l3_cfg = dict(layers_cfg["l3_urban"])
+
+    antenna_cfg = dict(l1_cfg.get("antenna_pattern", {}) or {})
+    if args.antenna_pattern_model is not None:
+        antenna_cfg["model"] = str(args.antenna_pattern_model)
+    if args.theta_3db_deg is not None:
+        antenna_cfg["theta_3db_deg"] = float(args.theta_3db_deg)
+    if args.antenna_max_rolloff_db is not None:
+        antenna_cfg["max_rolloff_db"] = float(args.antenna_max_rolloff_db)
+    if antenna_cfg:
+        l1_cfg["antenna_pattern"] = antenna_cfg
+    if args.rain_rate_mm_h is not None:
+        l1_cfg["rain_rate_mm_h"] = float(args.rain_rate_mm_h)
 
     city_center_lat = float((lat_south + lat_north) / 2.0)
     city_center_lon = float((lon_west + lon_east) / 2.0)
@@ -182,20 +270,30 @@ def main() -> None:
     target_norad_ids: Optional[List[str]] = None
     if args.norad_id:
         target_norad_ids = [str(x).strip() for x in args.norad_id if str(x).strip()]
-        if target_norad_ids:
-            l1.target_norad_ids = target_norad_ids
+    if args.target_sat_id:
+        target_norad_ids = [str(args.target_sat_id).strip()]
+    if target_norad_ids:
+        l1.target_norad_ids = target_norad_ids
 
-    top_k_sats = max(int(args.top_k_sats), 1)
+    top_k_sats = 1 if args.target_sat_id else max(int(args.top_k_sats), 1)
+    min_elevation_deg = args.min_elevation_deg
+    max_elevation_deg = args.max_elevation_deg
+    if args.force_low_elevation:
+        min_elevation_deg = 5.0 if min_elevation_deg is None else float(min_elevation_deg)
+        max_elevation_deg = 20.0 if max_elevation_deg is None else float(max_elevation_deg)
+
     visible_sats = l1.get_visible_satellites(
         origin_lat=city_center_lat,
         origin_lon=city_center_lon,
         timestamp=timestamp,
+        min_elevation_deg=min_elevation_deg,
+        max_elevation_deg=max_elevation_deg,
         target_norad_ids=target_norad_ids,
         max_count=top_k_sats,
     )
     if not visible_sats:
         raise RuntimeError(
-            "No visible satellite found at city center for this timestamp."
+            "No visible satellite found at city center for this timestamp / elevation filter."
         )
 
     sat_bundles: List[Dict[str, object]] = []
@@ -229,6 +327,7 @@ def main() -> None:
             "satellite_slant_range_km": sat_info.get("slant_range_km"),
             "satellite_altitude_km": sat_info.get("alt_m", 0.0) / 1000.0,
             "target_norad_ids": [norad_id],
+            "l2_padding_m": float(args.l2_padding_m),
         }
         sat_bundles.append({
             "rank": sat_rank,
@@ -253,6 +352,7 @@ def main() -> None:
     sat_workers = max(int(args.sat_workers), 1)
     use_sat_parallel = len(sat_bundles) > 1 and sat_workers > 1
     sat_executor: Optional[cf.ThreadPoolExecutor] = None
+    prototype_record: Optional[Dict[str, object]] = None
 
     if use_sat_parallel:
         sat_executor = cf.ThreadPoolExecutor(max_workers=min(sat_workers, len(sat_bundles)))
@@ -274,6 +374,8 @@ def main() -> None:
     def _compute_l2_interp_from_dem(
         dem_patch: np.ndarray,
         sat_info: Dict[str, float],
+        core_rows: slice,
+        core_cols: slice,
     ) -> np.ndarray:
         sat_elevation_deg = float(sat_info.get("elevation_deg", l2.sat_elevation_deg))
         sat_azimuth_deg = float(sat_info.get("azimuth_deg", l2.sat_azimuth_deg))
@@ -288,18 +390,21 @@ def main() -> None:
             sat_azimuth_deg=sat_azimuth_deg,
             return_profile=True,
         )
-        l2_tile = l2._apply_diffraction_loss(
+        l2_tile_full = l2._apply_diffraction_loss(
             dem=dem_patch,
             mask=occlusion_mask,
             excess_height_m=excess_height_m,
             obstacle_distance_m=obstacle_distance_m,
             sat_slant_range_m=max(float(sat_slant_range_km) * 1000.0, 1.0),
         )
+        l2_tile = l2_tile_full[core_rows, core_cols]
         return agg._interpolate_to_target(l2_tile, l2.coverage_km).astype(np.float32, copy=False)
 
     def _compute_candidate(
         sat_bundle: Dict[str, object],
         dem_patch: np.ndarray,
+        core_rows: slice,
+        core_cols: slice,
         l3_height: np.ndarray,
         l3_occ: Optional[np.ndarray],
         static_l3_tile: Optional[np.ndarray],
@@ -314,7 +419,12 @@ def main() -> None:
         else:
             l3_tile_local = static_l3_tile
 
-        l2_interp_local = _compute_l2_interp_from_dem(dem_patch, sat_bundle["sat_info"])
+        l2_interp_local = _compute_l2_interp_from_dem(
+            dem_patch,
+            sat_bundle["sat_info"],
+            core_rows,
+            core_cols,
+        )
         l1_template_local = sat_bundle["l1_template"]
         comp_local = (l1_template_local + l2_interp_local + l3_tile_local).astype(np.float32, copy=False)
         return comp_local, l2_interp_local, l3_tile_local
@@ -324,6 +434,7 @@ def main() -> None:
         for idx, row in enumerate(df.itertuples(index=False), start=1):
             ox = float(row.origin_x)
             oy = float(row.origin_y)
+            tile_id = str(getattr(row, "tile_id", f"xian_idx{idx:06d}"))
             if args.legacy_l2_origin:
                 l2_origin_lat, l2_origin_lon = oy, ox
             else:
@@ -334,8 +445,12 @@ def main() -> None:
                     shift_km_west=l2_shift_km,
                 )
 
-            l2._validate_bounds(l2_origin_lat, l2_origin_lon)
-            dem_patch = l2._load_dem_patch(l2_origin_lat, l2_origin_lon)
+            l2._validate_bounds(l2_origin_lat, l2_origin_lon, padding_m=float(args.l2_padding_m))
+            dem_patch, core_rows, core_cols = l2._load_dem_patch_with_padding(
+                l2_origin_lat,
+                l2_origin_lon,
+                padding_m=float(args.l2_padding_m),
+            )
             dem_patch = np.asarray(dem_patch, dtype=np.float32)
             l3_height, l3_occ = l3._load_tile_cache({"lat": oy, "lon": ox})
             l3_height = np.asarray(l3_height, dtype=np.float32)
@@ -346,6 +461,8 @@ def main() -> None:
                 comp_tile, l2_interp, l3_tile = _compute_candidate(
                     sat_bundle=only,
                     dem_patch=dem_patch,
+                    core_rows=core_rows,
+                    core_cols=core_cols,
                     l3_height=l3_height,
                     l3_occ=l3_occ,
                     static_l3_tile=None,
@@ -365,6 +482,8 @@ def main() -> None:
                             _compute_candidate,
                             sat_bundle,
                             dem_patch,
+                            core_rows,
+                            core_cols,
                             l3_height,
                             l3_occ,
                             static_l3_tile,
@@ -377,6 +496,8 @@ def main() -> None:
                         _compute_candidate(
                             sat_bundle=sat_bundle,
                             dem_patch=dem_patch,
+                            core_rows=core_rows,
+                            core_cols=core_cols,
                             l3_height=l3_height,
                             l3_occ=l3_occ,
                             static_l3_tile=static_l3_tile,
@@ -408,6 +529,24 @@ def main() -> None:
             city_l3[r0:r1, c0:c1] = l3_tile
             city_l2[r0:r1, c0:c1] = l2_interp
 
+            if args.dataset_prototype_out and prototype_record is None:
+                if len(sat_bundles) != 1:
+                    raise RuntimeError("dataset prototype export currently expects a single selected satellite (top_k_sats=1)")
+                prototype_l1 = (comp_tile - l2_interp - l3_tile).astype(np.float32, copy=False)
+                prototype_occ = l3_occ if l3_occ is not None else (l3_height > 0).astype(np.uint8)
+                prototype_record = {
+                    "tile_id": tile_id,
+                    "origin_lon": ox,
+                    "origin_lat": oy,
+                    "composite": comp_tile.astype(np.float32, copy=False),
+                    "l1": prototype_l1,
+                    "l2": l2_interp.astype(np.float32, copy=False),
+                    "l3": l3_tile.astype(np.float32, copy=False),
+                    "height": l3_height.astype(np.float32, copy=False),
+                    "occ": np.asarray(prototype_occ),
+                    "satellite": dict(only["sat_info"]),
+                }
+
             if idx == 1 or idx % 100 == 0 or idx == total_tiles:
                 print(f"[city] processed {idx}/{total_tiles} tiles")
     finally:
@@ -416,6 +555,71 @@ def main() -> None:
 
     stamp = timestamp.strftime("%Y%m%dT%H%M%SZ")
     base = f"{args.output_prefix}_{stamp}"
+
+    if args.dataset_prototype_out and prototype_record is not None:
+        dataset_root = Path(args.dataset_prototype_out)
+        if not dataset_root.is_absolute():
+            dataset_root = root / dataset_root
+        samples_dir = dataset_root / "samples"
+        previews_dir = dataset_root / "previews"
+        logs_dir = dataset_root / "logs"
+        for d in (samples_dir, previews_dir, logs_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        sat_info = prototype_record["satellite"]
+        sample_id = args.dataset_sample_id or (
+            f"sgmrm_v1__tile-{prototype_record['tile_id']}__ts-{stamp}__sat-{sat_info.get('norad_id','unknown')}"
+            f"__f-{_slug_float(l1.frequency_ghz)}__rain-{_slug_float(l1.rain_rate_mm_h)}"
+        )
+        sample_npz = samples_dir / f"{sample_id}.npz"
+        preview_png = previews_dir / f"{sample_id}.png"
+
+        np.savez_compressed(
+            sample_npz,
+            composite=prototype_record["composite"],
+            l1=prototype_record["l1"],
+            l2=prototype_record["l2"],
+            l3=prototype_record["l3"],
+            height=prototype_record["height"],
+            occ=prototype_record["occ"],
+        )
+
+        proto_comp = np.asarray(prototype_record["composite"], dtype=np.float32)
+        pvmin = float(np.percentile(proto_comp, 1))
+        pvmax = float(np.percentile(proto_comp, 99))
+        plt.imsave(preview_png, proto_comp, cmap="viridis", vmin=pvmin, vmax=pvmax)
+
+        manifest_entry = {
+            "sample_id": sample_id,
+            "dataset_version": "v1-prototype",
+            "split": "pilot",
+            "sample_type": "tile-level",
+            "source_script": "scripts/generate_xian_city_radiomap.py",
+            "array_keys": ["composite", "l1", "l2", "l3", "height", "occ"],
+            "grid_shape": list(proto_comp.shape),
+            "tile_id": prototype_record["tile_id"],
+            "timestamp_utc": timestamp.isoformat().replace("+00:00", "Z"),
+            "origin_lat": float(prototype_record["origin_lat"]),
+            "origin_lon": float(prototype_record["origin_lon"]),
+            "frequency_ghz": float(l1.frequency_ghz),
+            "rain_rate_mm_h": float(l1.rain_rate_mm_h),
+            "satellite_norad_id": str(sat_info.get("norad_id", "unknown")),
+            "satellite_elevation_deg": float(sat_info.get("elevation_deg", float("nan"))),
+            "satellite_azimuth_deg": float(sat_info.get("azimuth_deg", float("nan"))),
+            "ionex_used": bool(l1.ionex is not None),
+            "era5_used": bool(l1.era5 is not None),
+            "l2_padding_m": float(args.l2_padding_m),
+            "npz_path": str(sample_npz.relative_to(dataset_root)),
+            "preview_png_path": str(preview_png.relative_to(dataset_root)),
+            "composite_mean": float(np.mean(proto_comp)),
+            "composite_std": float(np.std(proto_comp)),
+        }
+        manifest_path = dataset_root / "manifest.jsonl"
+        _append_manifest_jsonl(manifest_path, manifest_entry)
+        _refresh_manifest_annotations(manifest_path)
+        print(f"[dataset-prototype] sample_id={sample_id}")
+        print(f"[dataset-prototype] npz={sample_npz}")
+        print(f"[dataset-prototype] preview={preview_png}")
 
     np.save(out_dir / f"{base}_composite.npy", city_composite)
     if args.save_components:
@@ -442,6 +646,8 @@ def main() -> None:
 
     stats = [
         f"mosaic={ny}x{nx} tiles ({rows}x{cols} px)",
+        f"selection={'single-target' if args.target_sat_id else f'Top-{len(sat_bundles)}'} | elev={min_elevation_deg if min_elevation_deg is not None else 'auto'}~{max_elevation_deg if max_elevation_deg is not None else 'auto'} deg",
+        f"L2 padding={float(args.l2_padding_m):.1f} m | antenna={l1.antenna_pattern_model} θ3dB={l1.theta_3db_deg:.2f}°",
         f"L1 template mean range={min(l1_template_means):.3f}~{max(l1_template_means):.3f} dB",
         f"L2 city mean/std={float(np.mean(city_l2)):.3f}/{float(np.std(city_l2)):.3f} dB",
         f"L3 city mean/std={float(np.mean(city_l3)):.3f}/{float(np.std(city_l3)):.3f} dB",
@@ -482,6 +688,9 @@ def main() -> None:
     ))
     print(f"  L3 incident source: {incident_source}")
     print(f"  L2 origin mode    : {'legacy' if args.legacy_l2_origin else 'center-aligned'}")
+    print(f"  L2 padding (m)    : {float(args.l2_padding_m):.1f}")
+    print(f"  Elev filter (deg) : {min_elevation_deg if min_elevation_deg is not None else 'auto'} ~ {max_elevation_deg if max_elevation_deg is not None else 'auto'}")
+    print(f"  Antenna pattern   : {l1.antenna_pattern_model} | theta_3dB={l1.theta_3db_deg:.2f}°")
     print(f"  Sat workers       : {sat_workers}")
     print(f"  Composite stats: mean={float(np.mean(city_composite)):.3f}, std={float(np.std(city_composite)):.3f}")
     print("=" * 76)

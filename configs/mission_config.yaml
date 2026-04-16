@@ -59,8 +59,14 @@ layers:
     polarization:
       mismatch_angle_deg: 0.0
       mode: "linear"            # linear / circular
+    # Multi-satellite interference configuration
+    interference:
+      enable_interference: false  # Enable multi-satellite co-channel interference modeling
+      tx_power_dbm: 40.0         # Satellite EIRP in dBm (Reference: FCC IBFS File No. SAT-LOA-20161115-00118)
+      noise_floor_dbm: -110.0    # Equivalent noise floor in dBm (interference-dominated scenario)
+      max_interfering_sats: 20   # Maximum number of interfering satellites to consider (performance optimization)
     # Real data sources (2025-01-01)
-    ionex_file: "data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
+    ionex_file: "data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
     era5_file: "data/l1_space/data/data_stream-oper_stepType-instant.nc"   # optional; graceful fallback if absent
     tle_file: "data/2025_0101.tle"   # Starlink constellation TLE for 2025-01-01
 
@@ -70,7 +76,7 @@ layers:
     grid_size: 256
     coverage_km: 25.6
     resolution_m: 100.0
-    dem_file: "data/l2_topo/全国DEM数据.tif"
+    dem_file: "data/l2_topo/china_dem_30m.tif"
     frequency_ghz: 14.5         # Match L1 Ku-band frequency
     satellite_elevation_deg: 45.0
     satellite_azimuth_deg: 180.0

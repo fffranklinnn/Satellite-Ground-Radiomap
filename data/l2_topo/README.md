@@ -4,7 +4,7 @@ L2 地形层的数据目录，当前主要使用全国 DEM GeoTIFF。
 
 ## 1. 当前数据
 
-- 文件：`全国DEM数据.tif`
+- 文件：`china_dem_30m.tif`
 - 格式：GeoTIFF
 - 覆盖：约 15°~57°N, 73°~139°E
 - 分辨率：约 30 m（原始）
@@ -26,7 +26,7 @@ L2 不会整图加载，而是按每个 tile 的地理窗口读取：
 layers:
   l2_topo:
     enabled: true
-    dem_file: "data/l2_topo/全国DEM数据.tif"
+    dem_file: "data/l2_topo/china_dem_30m.tif"
     frequency_ghz: 14.5
     satellite_elevation_deg: 45.0
     satellite_azimuth_deg: 180.0

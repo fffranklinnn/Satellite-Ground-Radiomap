@@ -40,12 +40,17 @@ def parse_args() -> argparse.Namespace:
                         help="Tile list CSV path forwarded to city script")
     parser.add_argument("--output-root", type=str, default="output/city_batch_experiments",
                         help="Root output directory for all experiments")
+    parser.add_argument("--mode", type=str, default="batch",
+                        choices=["batch", "micro_transit"],
+                        help="Sampling mode: standard hourly batch or dense micro-scale transit sweep")
     parser.add_argument("--start", type=str, default="2025-01-01T00:00:00",
                         help="Batch start time (ISO, UTC assumed if tz missing)")
     parser.add_argument("--end", type=str, default="2025-01-01T23:00:00",
                         help="Batch end time (ISO, UTC assumed if tz missing)")
     parser.add_argument("--step-hours", type=float, default=1.0,
-                        help="Time step in hours")
+                        help="Time step in hours (default mode)")
+    parser.add_argument("--step-seconds", type=float, default=None,
+                        help="Optional dense time step in seconds (recommended for micro_transit)")
     parser.add_argument("--freqs-ghz", type=str, default="14.5",
                         help='Comma-separated frequencies in GHz, e.g. "10,14.5,26.5"')
     parser.add_argument("--rain-rates", type=str, default="0",
@@ -66,8 +71,18 @@ def parse_args() -> argparse.Namespace:
                         help="Print planned commands without executing")
     parser.add_argument("--norad-id", action="append", default=None,
                         help="Limit candidate satellites to NORAD ID; can be repeated")
+    parser.add_argument("--target-sat-id", type=str, default=None,
+                        help="Force a single target satellite NORAD ID (micro-scale transit mode)")
     parser.add_argument("--top-k-sats", type=int, default=1,
                         help="Use top-K visible satellites by elevation at city center (forwarded)")
+    parser.add_argument("--force-low-elevation", action="store_true",
+                        help="Forward low-elevation-only filtering to city script")
+    parser.add_argument("--min-elevation-deg", type=float, default=None,
+                        help="Minimum elevation filter forwarded to city script")
+    parser.add_argument("--max-elevation-deg", type=float, default=None,
+                        help="Maximum elevation filter forwarded to city script")
+    parser.add_argument("--l2-padding-m", type=float, default=0.0,
+                        help="DEM overlap buffer in metres for L2 tile-edge continuity")
     parser.add_argument("--sat-workers", type=int, default=1,
                         help="Per-tile satellite parallel workers forwarded to city script")
     parser.add_argument("--use-config-incident-dir", action="store_true",
@@ -105,10 +120,18 @@ def _parse_gpu_ids(text: str) -> List[str]:
     return out
 
 
-def _time_grid(start: datetime, end: datetime, step_hours: float) -> List[datetime]:
-    if step_hours <= 0:
-        raise ValueError("--step-hours must be > 0")
-    step = timedelta(hours=step_hours)
+def _time_grid(start: datetime,
+               end: datetime,
+               step_hours: Optional[float] = None,
+               step_seconds: Optional[float] = None) -> List[datetime]:
+    if step_seconds is not None:
+        if step_seconds <= 0:
+            raise ValueError("--step-seconds must be > 0")
+        step = timedelta(seconds=float(step_seconds))
+    else:
+        if step_hours is None or step_hours <= 0:
+            raise ValueError("--step-hours must be > 0")
+        step = timedelta(hours=float(step_hours))
     out: List[datetime] = []
     t = start
     while t <= end:
@@ -246,7 +269,10 @@ def main() -> None:
     gpu_ids = _parse_gpu_ids(args.gpu_ids)
     start = _parse_iso_utc(args.start)
     end = _parse_iso_utc(args.end)
-    times = _time_grid(start, end, args.step_hours)
+    step_seconds = args.step_seconds
+    if args.mode == "micro_transit" and step_seconds is None:
+        step_seconds = 10.0
+    times = _time_grid(start, end, step_hours=args.step_hours, step_seconds=step_seconds)
 
     if args.workers <= 0:
         raise ValueError("--workers must be >= 1")
@@ -254,9 +280,14 @@ def main() -> None:
     plan = list(itertools.product(freqs, rain_rates, times))
     total = len(plan)
     print(f"[batch-city] total experiments: {total}")
+    print(f"[batch-city] mode: {args.mode}")
     print(f"[batch-city] freq sweep (GHz): {freqs}")
     print(f"[batch-city] rain sweep (mm/h): {rain_rates}")
     print(f"[batch-city] time points: {len(times)} | {start.isoformat()} -> {end.isoformat()}")
+    if step_seconds is not None:
+        print(f"[batch-city] step: {step_seconds:g} s")
+    else:
+        print(f"[batch-city] step: {args.step_hours:g} h")
     print(f"[batch-city] workers: {args.workers}")
     print(f"[batch-city] gpu_ids: {gpu_ids if gpu_ids else 'not specified'}")
     if gpu_ids and args.workers > len(gpu_ids):
@@ -285,9 +316,15 @@ def main() -> None:
         row: Dict[str, object] = {
             "planned_idx": i,
             "exp_id": exp_id,
+            "mode": args.mode,
             "timestamp_utc": ts.isoformat(),
             "frequency_ghz": float(freq),
             "rain_rate_mm_h": float(rain),
+            "target_sat_id": args.target_sat_id,
+            "force_low_elevation": bool(args.force_low_elevation),
+            "min_elevation_deg": args.min_elevation_deg,
+            "max_elevation_deg": args.max_elevation_deg,
+            "l2_padding_m": float(args.l2_padding_m),
             "gpu_id": None,
             "status": "pending",
             "output_dir": str(exp_dir),
@@ -336,8 +373,18 @@ def main() -> None:
         if args.norad_id:
             for nid in args.norad_id:
                 cmd.extend(["--norad-id", str(nid)])
-        if args.top_k_sats is not None and int(args.top_k_sats) > 1:
+        if args.target_sat_id:
+            cmd.extend(["--target-sat-id", str(args.target_sat_id)])
+        if args.top_k_sats is not None and int(args.top_k_sats) > 1 and not args.target_sat_id:
             cmd.extend(["--top-k-sats", str(int(args.top_k_sats))])
+        if args.force_low_elevation:
+            cmd.append("--force-low-elevation")
+        if args.min_elevation_deg is not None:
+            cmd.extend(["--min-elevation-deg", str(float(args.min_elevation_deg))])
+        if args.max_elevation_deg is not None:
+            cmd.extend(["--max-elevation-deg", str(float(args.max_elevation_deg))])
+        if args.l2_padding_m is not None and float(args.l2_padding_m) > 0:
+            cmd.extend(["--l2-padding-m", str(float(args.l2_padding_m))])
         if args.sat_workers is not None and int(args.sat_workers) > 1:
             cmd.extend(["--sat-workers", str(int(args.sat_workers))])
         if args.use_config_incident_dir:

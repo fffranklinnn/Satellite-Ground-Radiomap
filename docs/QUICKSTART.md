@@ -10,7 +10,7 @@ python main.py --help
 推荐先确认以下关键文件存在：
 
 - `data/2025_0101.tle`
-- `data/l2_topo/全国DEM数据.tif`（L2）
+- `data/l2_topo/china_dem_30m.tif`（L2）
 - `data/l3_urban/xian/tiles_60/`（L3）
 - `data/l1_space/data/*.INX.gz`（可选，IONEX）
 - `data/l1_space/data/*.nc`（可选，ERA5）

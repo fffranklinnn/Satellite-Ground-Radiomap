@@ -183,6 +183,8 @@ def get_grid_latlon(origin_lat: float, origin_lon: float,
 
     # Pixel-centre offsets relative to origin (metres)
     offsets = np.arange(grid_size) * pixel_m - half + pixel_m / 2.0
+    # Note the y-axis reversal: array row 0 should represent north side
+    # (consistent with map display conventions used by the project).
     x_m, y_m = np.meshgrid(offsets, offsets[::-1])   # x→east, y↑north
 
     # Flat-Earth approximation (valid for < 500 km)
@@ -213,10 +215,12 @@ def get_azimuth_elevation(sat_x_m: float, sat_y_m: float, sat_alt_m: float,
         elevation_deg : (grid_size, grid_size) elevation in degrees
         slant_range_m : (grid_size, grid_size) slant range in metres
     """
+    # Vector from satellite projection to each ground pixel in local ENU plane.
     dx = grid_x_m - sat_x_m
     dy = grid_y_m - sat_y_m
     horiz_dist = np.sqrt(dx ** 2 + dy ** 2)
 
+    # Azimuth convention: 0° = north, clockwise positive.
     elevation_deg = np.rad2deg(np.arctan2(sat_alt_m, horiz_dist))
     azimuth_deg   = np.rad2deg(np.arctan2(dx, dy)) % 360.0
     slant_range_m = np.sqrt(horiz_dist ** 2 + sat_alt_m ** 2)

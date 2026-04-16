@@ -8,11 +8,13 @@ L3 城市层使用“原始建筑矢量 + 预构建 tile cache”两段式数据
 
 - 内容：陕西省范围建筑 shapefile（多城市）
 - 作用：原始来源数据，不直接参与在线 L3 计算
+- 细分说明：[shanxisheng/README.md](shanxisheng/README.md)
 
 ### `xian/tiles_60/`
 
 - 内容：西安可运行 tile cache（`H.npy`, `Occ.npy`, `meta.json`）
 - 作用：L3 运行时直接读取
+- 细分说明：[xian/README.md](xian/README.md)
 
 ### `xian/catalog/buildings_xian.parquet`
 

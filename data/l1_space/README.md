@@ -7,7 +7,7 @@
 | 文件类型 | 示例 | 用途 |
 |---|---|---|
 | TLE | `data/2025_0101.tle` | 卫星轨道传播与选星 |
-| IONEX | `UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz` | TEC 查询 |
+| IONEX | `cddis_data_2025/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz` | TEC 查询 |
 | ERA5 pressure-level | `data_stream-oper_stepType-instant.nc` | `q` 积分得到 IWV |
 | ERA5 请求脚本 | `cds.py` | 下载 pressure-level 数据 |
 | ERA5 批量下载脚本 | `cds_pressure_batch.py` | 按月/按日拆分下载全年 pressure-level |
@@ -15,6 +15,13 @@
 | IONEX 请求脚本 | `NASAcddis.py` | 批量下载 IONEX |
 
 > 注：下载脚本是请求入口，实际下载结果取决于本地执行和账号权限。
+
+## 1.1 目录分工
+
+- `data/l1_space/README.md`
+  - L1 数据总览与使用说明
+- `data/l1_space/data/README.md`
+  - 具体到下载脚本、归档目录与落地文件的工作区说明
 
 ## 2. IONEX 数据要点
 
@@ -119,7 +126,7 @@ L1 层配置（示例）：
 layers:
   l1_macro:
     tle_file: "data/2025_0101.tle"
-    ionex_file: "data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
+    ionex_file: "data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
     era5_file: "data/l1_space/data/era5_pressure_levels_2025_nc/era5_pressure_levels_202501.nc"
 ```
 

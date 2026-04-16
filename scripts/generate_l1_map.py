@@ -38,7 +38,7 @@ BASE_CONFIG = {
     'satellite_altitude_km': 550.0,
     'tec':                   10.0,
     'rain_rate_mm_h':        0.0,
-    'ionex_file': 'data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz',
+    'ionex_file': 'data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz',
     'era5_file':  'data/l1_space/data/data_stream-oper_stepType-instant.nc',
     'tle_file':   'data/2025_0101.tle',
 }

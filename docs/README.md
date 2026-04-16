@@ -2,22 +2,23 @@
 
 本目录汇总 SG-MRM 的架构、上手与项目状态文档。
 
-## 核心文档
+## 目录角色
+
+- 对外提供项目级说明、快速上手与阶段性总结
+- 作为 `README.md` 与 `scripts/README.md` 的延伸文档区
+
+## 当前文档清单
 
 - [QUICKSTART.md](QUICKSTART.md)
-  - 快速安装、最小可运行命令、常见数据依赖
+  - 环境准备、最小运行命令、常见数据依赖
 - [architecture.md](architecture.md)
-  - 三层架构与核心数据流
+  - 三层架构、数据流、尺度对齐语义
 - [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)
-  - 当前实现快照、数据现状、已知边界与结构优化建议
-
-## 建议阅读顺序
-
-1. [QUICKSTART.md](QUICKSTART.md)
-2. [../configs/README.md](../configs/README.md)
-3. [../data/README.md](../data/README.md)
-4. [../src/layers/README.md](../src/layers/README.md)
-5. [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)
+  - 当前代码能力、数据现状、结构治理建议
+- [PHASE1_SUMMARY.md](PHASE1_SUMMARY.md)
+  - Phase 1 阶段性结果摘要
+- [PHASE1_COMPLETION_REPORT.md](PHASE1_COMPLETION_REPORT.md)
+  - Phase 1 完成报告与交付说明
 
 ## 相关入口
 

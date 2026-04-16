@@ -6,11 +6,12 @@
 
 ```text
 data/
-├── 2025_0101.tle
+├── 2025_0101.tle -> starlink-2025-tle/2025-01-01.tle
 ├── l1_space/
 │   └── data/
 ├── l2_topo/
-└── l3_urban/
+├── l3_urban/
+└── starlink-2025-tle/
 ```
 
 ## 2. 按层的数据依赖
@@ -36,7 +37,7 @@ data/
 
 ### L2（地形层）
 
-- `data/l2_topo/全国DEM数据.tif`
+- `data/l2_topo/china_dem_30m.tif`
 
 说明：L2 通过窗口读取，不会一次性把全国 DEM 全部加载到内存。
 
@@ -114,8 +115,51 @@ IONEX 批量下载：
 python data/l1_space/data/NASAcddis.py
 ```
 
-## 6. 相关文档
+## 6. `output/datasets/sgmrm_v1/` 目录约定（draft）
+
+除原始输入数据外，当前项目已经开始在 `output/datasets/sgmrm_v1/` 下整理 tile-level prototype / pilot 样本。
+
+推荐结构：
+
+```text
+output/datasets/sgmrm_v1/
+  pilot/
+    manifest.jsonl
+    logs/
+    previews/
+    samples/
+  train/
+  val/
+  test/
+```
+
+说明：
+- `pilot/`：用于 exporter、schema 和条件轴验证
+- `train/val/test/`：预留给后续正式数据集切分
+- 当前 arrays 以 `.npz` 为主，预览图以 `.png` 为辅，索引使用 `manifest.jsonl`
+
+当前 pilot 已验证的小规模条件轴包括：
+- rain sweep
+- satellite sweep
+- timestamp sweep
+
+正式数据集生成前，建议先保证：
+1. `sample_id` 命名规则稳定
+2. `manifest.jsonl` 字段一致
+3. 数组键集合不随脚本运行随机漂移
+4. matched sweep 成员在 split 时保持同组，不被拆散
+
+当前推荐的组语义是：
+- `scenario_id`：稳定单样本场景标识
+- `condition_axes`：该样本参与的条件轴列表
+- `condition_groups`：该样本所属 matched sweep 组列表（注意是列表，不是单值）
+
+## 7. 相关文档
 
 - L1 数据细节：[l1_space/README.md](l1_space/README.md)
+- L1 数据工作区细节：[l1_space/data/README.md](l1_space/data/README.md)
 - L2 DEM 细节：[l2_topo/README.md](l2_topo/README.md)
 - L3 建筑数据与 cache：[l3_urban/README.md](l3_urban/README.md)
+- 西安 L3 细分目录：[l3_urban/xian/README.md](l3_urban/xian/README.md)
+- 陕西省原始矢量目录：[l3_urban/shanxisheng/README.md](l3_urban/shanxisheng/README.md)
+- 脚本与 dataset prototype 说明：[../scripts/README.md](../scripts/README.md)

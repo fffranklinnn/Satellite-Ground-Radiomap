@@ -96,6 +96,8 @@ class BenchmarkRunner:
         """
         frame = self.frame_builder.build(timestamp)
 
+        if self.l1_layer is not None:
+            self.l1_layer.clear_fallbacks()
         entry = self.l1_layer.propagate_entry(frame) if self.l1_layer else None
         terrain = (
             self.l2_layer.propagate_terrain(frame, entry=entry)
@@ -105,6 +107,8 @@ class BenchmarkRunner:
             self.l3_layer.refine_urban(frame, entry=entry)
             if self.l3_layer else None
         )
+
+        frame_fallbacks = list(self.l1_layer.fallbacks_used) if self.l1_layer is not None else []
 
         msm = MultiScaleMap.compose(
             frame_id=frame.frame_id,
@@ -121,6 +125,7 @@ class BenchmarkRunner:
             data_snapshot_id=self.data_snapshot_id,
             input_files=collect_input_file_paths(self.config),
             hash_files=True,
+            fallbacks_used=frame_fallbacks,
         )
 
         _, output_manifest = export_dataset(

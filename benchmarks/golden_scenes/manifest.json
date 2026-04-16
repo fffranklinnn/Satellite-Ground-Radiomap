@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "config_hash": "d210433a7765450ea321281332c58b58f03c116c9ce3abb3c4787f6db658c2ed",
+  "config_hash": "dce6f8fc91cc16ad5678b5ba907d09e4ac78c805cf6e6379f592ff09320126cf",
   "config_path": "benchmarks/golden_scenes_config.yaml",
   "frame_list": [
     "2025-01-03T00:00:00+00:00"
@@ -8,6 +8,10 @@
   "origin_lat": 34.3416,
   "origin_lon": 108.9398,
   "input_files": {
+    "tle_file": {
+      "path": "data/starlink-2025-tle/2025-01-03.tle",
+      "sha256": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2"
+    },
     "ionex_file": {
       "path": "data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250030000_01D_15M_GIM.INX.gz",
       "sha256": "ddca2913df79985c6ac68d4303a7333ca6680c46a3f8a486de6b5534ee692ef2"
@@ -16,13 +20,13 @@
       "path": "data/l1_space/data/data_stream-oper_stepType-instant.nc",
       "sha256": "a715509fde6b7f9a50a9ac2617b2201c9d3a863d3793d68a818565cab12069d5"
     },
-    "tle_file": {
-      "path": "data/starlink-2025-tle/2025-01-03.tle",
-      "sha256": "a982661d67bc25a451b382e516d19ee4d79b71c47fbe6c274b6ea260581354b2"
-    },
     "dem_file": {
       "path": "data/l2_topo/china_dem_30.tif",
       "sha256": "d796a25eae49bb4390f4905a2a887fe8e550d1bfcc27b74f359e5684285eee5b"
+    },
+    "tile_cache_root": {
+      "path": "data/l3_urban/xian/tiles_60",
+      "sha256": "8ccd2af926498a8cf72d3e4f9b2c925535d286d15a6fb6209e54c53eb7674a27"
     }
   },
   "output_files": {

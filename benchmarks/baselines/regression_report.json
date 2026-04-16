@@ -1,6 +1,6 @@
 {
   "schema_version": "3",
-  "timestamp_utc": "2026-04-16T01:51:23.408907+00:00",
+  "timestamp_utc": "2026-04-16T03:09:53.496766+00:00",
   "config_path": "benchmarks/golden_scenes_config.yaml",
   "golden_dir": "benchmarks/golden_scenes",
   "output_dir": "benchmarks/baselines/regression_run",
@@ -33,6 +33,30 @@
       "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1_only/frame_000000_path_loss_map.npy"
     },
     {
+      "name": "l1_only/product_file_written/path_loss_map",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1_only/frame_000000_path_loss_map.npy"
+    },
+    {
+      "name": "l1_only/product_file_written/visibility_mask",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1_only/frame_000000_visibility_mask.npy"
+    },
+    {
+      "name": "l1_only/product_file_written/elevation_field",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1_only/frame_000000_elevation_field.npy"
+    },
+    {
+      "name": "l1_only/product_file_written/azimuth_field",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1_only/frame_000000_azimuth_field.npy"
+    },
+    {
       "name": "l1_only/output_shape_matches_grid",
       "passed": true,
       "actual_shape": [
@@ -44,6 +68,12 @@
         256
       ],
       "ac": "AC-1 / AC-4"
+    },
+    {
+      "name": "l1_only/frame_id_traceability",
+      "passed": true,
+      "actual": "20250103T000000Z_nosat",
+      "ac": "AC-4"
     },
     {
       "name": "l1_only/reproducibility_run1_vs_run2",
@@ -80,6 +110,36 @@
       "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2_composite/frame_000000_path_loss_map.npy"
     },
     {
+      "name": "l1l2_composite/product_file_written/path_loss_map",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2_composite/frame_000000_path_loss_map.npy"
+    },
+    {
+      "name": "l1l2_composite/product_file_written/visibility_mask",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2_composite/frame_000000_visibility_mask.npy"
+    },
+    {
+      "name": "l1l2_composite/product_file_written/elevation_field",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2_composite/frame_000000_elevation_field.npy"
+    },
+    {
+      "name": "l1l2_composite/product_file_written/azimuth_field",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2_composite/frame_000000_azimuth_field.npy"
+    },
+    {
+      "name": "l1l2_composite/product_file_written/terrain_blockage",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2_composite/frame_000000_terrain_blockage.npy"
+    },
+    {
       "name": "l1l2_composite/output_shape_matches_grid",
       "passed": true,
       "actual_shape": [
@@ -91,6 +151,12 @@
         256
       ],
       "ac": "AC-1 / AC-4"
+    },
+    {
+      "name": "l1l2_composite/frame_id_traceability",
+      "passed": true,
+      "actual": "20250103T000000Z_nosat",
+      "ac": "AC-4"
     },
     {
       "name": "l1l2_composite/reproducibility_run1_vs_run2",
@@ -127,6 +193,42 @@
       "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2l3_composite/frame_000000_path_loss_map.npy"
     },
     {
+      "name": "l1l2l3_composite/product_file_written/path_loss_map",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2l3_composite/frame_000000_path_loss_map.npy"
+    },
+    {
+      "name": "l1l2l3_composite/product_file_written/visibility_mask",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2l3_composite/frame_000000_visibility_mask.npy"
+    },
+    {
+      "name": "l1l2l3_composite/product_file_written/elevation_field",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2l3_composite/frame_000000_elevation_field.npy"
+    },
+    {
+      "name": "l1l2l3_composite/product_file_written/azimuth_field",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2l3_composite/frame_000000_azimuth_field.npy"
+    },
+    {
+      "name": "l1l2l3_composite/product_file_written/terrain_blockage",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2l3_composite/frame_000000_terrain_blockage.npy"
+    },
+    {
+      "name": "l1l2l3_composite/product_file_written/urban_residual",
+      "passed": true,
+      "ac": "AC-7",
+      "actual": "/home/Users_Work_Space/zsfang/Satellite-Ground-Radiomap/benchmarks/baselines/regression_run/l1l2l3_composite/frame_000000_urban_residual.npy"
+    },
+    {
       "name": "l1l2l3_composite/output_shape_matches_grid",
       "passed": true,
       "actual_shape": [
@@ -138,6 +240,12 @@
         256
       ],
       "ac": "AC-1 / AC-4"
+    },
+    {
+      "name": "l1l2l3_composite/frame_id_traceability",
+      "passed": true,
+      "actual": "20250103T000000Z_nosat",
+      "ac": "AC-4"
     },
     {
       "name": "l1l2l3_composite/reproducibility_run1_vs_run2",
@@ -157,8 +265,8 @@
   "manifest_checks": [
     {
       "field": "l1_only/config_hash",
-      "actual": "d210433a7765450ea321281332c58b58f03c116c9ce3abb3c4787f6db658c2ed",
-      "reference": "d210433a7765450ea321281332c58b58f03c116c9ce3abb3c4787f6db658c2ed",
+      "actual": "dce6f8fc91cc16ad5678b5ba907d09e4ac78c805cf6e6379f592ff09320126cf",
+      "reference": "dce6f8fc91cc16ad5678b5ba907d09e4ac78c805cf6e6379f592ff09320126cf",
       "passed": true,
       "ac": "AC-6"
     },
@@ -171,6 +279,20 @@
     },
     {
       "field": "l1_only/input_file_hashes_populated",
+      "actual": true,
+      "reference": true,
+      "passed": true,
+      "ac": "AC-6"
+    },
+    {
+      "field": "l1_only/data_snapshot_id_matches_config",
+      "actual": "golden_v1",
+      "reference": "golden_v1",
+      "passed": true,
+      "ac": "AC-6"
+    },
+    {
+      "field": "l1_only/fallbacks_used_is_list",
       "actual": true,
       "reference": true,
       "passed": true,
@@ -206,8 +328,8 @@
     },
     {
       "field": "l1l2_composite/config_hash",
-      "actual": "d210433a7765450ea321281332c58b58f03c116c9ce3abb3c4787f6db658c2ed",
-      "reference": "d210433a7765450ea321281332c58b58f03c116c9ce3abb3c4787f6db658c2ed",
+      "actual": "dce6f8fc91cc16ad5678b5ba907d09e4ac78c805cf6e6379f592ff09320126cf",
+      "reference": "dce6f8fc91cc16ad5678b5ba907d09e4ac78c805cf6e6379f592ff09320126cf",
       "passed": true,
       "ac": "AC-6"
     },
@@ -220,6 +342,20 @@
     },
     {
       "field": "l1l2_composite/input_file_hashes_populated",
+      "actual": true,
+      "reference": true,
+      "passed": true,
+      "ac": "AC-6"
+    },
+    {
+      "field": "l1l2_composite/data_snapshot_id_matches_config",
+      "actual": "golden_v1",
+      "reference": "golden_v1",
+      "passed": true,
+      "ac": "AC-6"
+    },
+    {
+      "field": "l1l2_composite/fallbacks_used_is_list",
       "actual": true,
       "reference": true,
       "passed": true,
@@ -255,8 +391,8 @@
     },
     {
       "field": "l1l2l3_composite/config_hash",
-      "actual": "d210433a7765450ea321281332c58b58f03c116c9ce3abb3c4787f6db658c2ed",
-      "reference": "d210433a7765450ea321281332c58b58f03c116c9ce3abb3c4787f6db658c2ed",
+      "actual": "dce6f8fc91cc16ad5678b5ba907d09e4ac78c805cf6e6379f592ff09320126cf",
+      "reference": "dce6f8fc91cc16ad5678b5ba907d09e4ac78c805cf6e6379f592ff09320126cf",
       "passed": true,
       "ac": "AC-6"
     },
@@ -269,6 +405,20 @@
     },
     {
       "field": "l1l2l3_composite/input_file_hashes_populated",
+      "actual": true,
+      "reference": true,
+      "passed": true,
+      "ac": "AC-6"
+    },
+    {
+      "field": "l1l2l3_composite/data_snapshot_id_matches_config",
+      "actual": "golden_v1",
+      "reference": "golden_v1",
+      "passed": true,
+      "ac": "AC-6"
+    },
+    {
+      "field": "l1l2l3_composite/fallbacks_used_is_list",
       "actual": true,
       "reference": true,
       "passed": true,

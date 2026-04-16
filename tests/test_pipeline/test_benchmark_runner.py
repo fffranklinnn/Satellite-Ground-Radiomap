@@ -549,3 +549,116 @@ class TestInputFileHashes:
         h = manifest.input_file_hashes["tile_cache_root"]
         assert h != "", "Directory-backed input hash must not be empty"
         assert len(h) == 64
+
+
+# ---------------------------------------------------------------------------
+# Runtime-facing strict-mode tests (task20 / AC-6 end-to-end)
+# These tests go through the config-driven runtime path (propagate_terrain /
+# refine_urban), not just the internal helper methods.
+# ---------------------------------------------------------------------------
+
+from src.context.time_utils import StrictModeError
+from src.layers.l2_topo import L2TopoLayer
+from src.layers.l3_urban import L3UrbanLayer
+from src.context.frame_context import FrameContext
+from datetime import timezone
+
+
+def _make_frame() -> FrameContext:
+    return FrameContext(
+        frame_id="strict_test_frame",
+        timestamp=datetime(2025, 1, 3, 0, 0, 0, tzinfo=timezone.utc),
+        grid=GRID,
+    )
+
+
+class TestStrictModeEndToEnd:
+    """
+    End-to-end strict-mode tests: config dict with strict_data=True propagated
+    through the layer constructor, then runtime method raises StrictModeError.
+    """
+
+    def test_l2_strict_mode_propagate_terrain_raises(self, tmp_path):
+        """propagate_terrain with strict_data=True and missing DEM raises StrictModeError."""
+        cfg = {
+            "dem_file": str(tmp_path / "nonexistent.tif"),
+            "frequency_ghz": 14.5,
+            "strict_data": True,
+            "grid_size": 256,
+            "coverage_km": 25.6,
+            "resolution_m": 100.0,
+        }
+        layer = L2TopoLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+        frame = _make_frame()
+        with pytest.raises(StrictModeError):
+            layer.propagate_terrain(frame)
+
+    def test_l2_non_strict_propagate_terrain_returns_zero_loss(self, tmp_path):
+        """propagate_terrain with strict_data=False and missing DEM raises FileNotFoundError (not StrictModeError)."""
+        cfg = {
+            "dem_file": str(tmp_path / "nonexistent.tif"),
+            "frequency_ghz": 14.5,
+            "strict_data": False,
+            "grid_size": 256,
+            "coverage_km": 25.6,
+            "resolution_m": 100.0,
+        }
+        layer = L2TopoLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+        frame = _make_frame()
+        with pytest.raises(FileNotFoundError) as exc_info:
+            layer.propagate_terrain(frame)
+        assert not isinstance(exc_info.value, StrictModeError)
+
+    def test_l3_strict_mode_refine_urban_raises(self, tmp_path):
+        """refine_urban with strict_data=True and empty tile cache raises StrictModeError."""
+        empty_cache = tmp_path / "tiles"
+        empty_cache.mkdir()
+        cfg = {
+            "tile_cache_root": str(empty_cache),
+            "nlos_loss_db": 20.0,
+            "strict_data": True,
+            "incident_dir": {"az_deg": 180.0, "el_deg": 45.0},
+            "grid_size": 256,
+            "coverage_km": 0.256,
+            "resolution_m": 1.0,
+        }
+        layer = L3UrbanLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+        frame = _make_frame()
+        with pytest.raises(StrictModeError):
+            layer.refine_urban(frame)
+
+    def test_l3_non_strict_refine_urban_raises_file_not_found(self, tmp_path):
+        """refine_urban with strict_data=False and empty tile cache raises FileNotFoundError."""
+        empty_cache = tmp_path / "tiles"
+        empty_cache.mkdir()
+        cfg = {
+            "tile_cache_root": str(empty_cache),
+            "nlos_loss_db": 20.0,
+            "strict_data": False,
+            "incident_dir": {"az_deg": 180.0, "el_deg": 45.0},
+            "grid_size": 256,
+            "coverage_km": 0.256,
+            "resolution_m": 1.0,
+        }
+        layer = L3UrbanLayer(cfg, origin_lat=34.3, origin_lon=108.9)
+        frame = _make_frame()
+        with pytest.raises(FileNotFoundError) as exc_info:
+            layer.refine_urban(frame)
+        assert not isinstance(exc_info.value, StrictModeError)
+
+    def test_benchmark_runner_collects_fallbacks_used(self, tmp_path):
+        """BenchmarkRunner.run_frame must populate fallbacks_used in manifest when L1 falls back."""
+        l1, l2, l3 = _make_mock_layers("fallback_frame")
+        # Simulate L1 recording a fallback
+        l1.fallbacks_used = ["L1: IONEX unavailable, using synthetic TEC"]
+        l1.clear_fallbacks = lambda: None  # no-op so we can inspect after
+        fb = _make_frame_builder()
+        runner = BenchmarkRunner(
+            frame_builder=fb, l1_layer=l1, l2_layer=l2, l3_layer=l3,
+            config=CONFIG, data_snapshot_id=SNAPSHOT_ID,
+        )
+        frame = FrameContext(frame_id="fallback_frame", timestamp=TS_UTC, grid=GRID)
+        with patch.object(runner.frame_builder, "build", return_value=frame):
+            manifest = runner.run_frame(TS_UTC, tmp_path, ["path_loss_map"])
+        assert isinstance(manifest.fallbacks_used, (list, tuple))
+

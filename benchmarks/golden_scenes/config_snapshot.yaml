@@ -1,4 +1,5 @@
 data_validation:
+  snapshot_id: golden_v1
   strict: false
 layers:
   l1_macro:

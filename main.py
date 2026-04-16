@@ -311,6 +311,8 @@ def main():
     strict_data = bool(args.strict_data or strict_from_cfg)
     if strict_data:
         config.setdefault('layers', {}).setdefault('l1_macro', {})['strict_data'] = True
+        config.setdefault('layers', {}).setdefault('l2_topo', {})['strict_data'] = True
+        config.setdefault('layers', {}).setdefault('l3_urban', {})['strict_data'] = True
 
     report = validate_data_integrity(config=config, project_root=Path(__file__).parent, strict=strict_data)
     print(format_data_validation_report(report))

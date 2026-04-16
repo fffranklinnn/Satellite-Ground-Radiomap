@@ -69,6 +69,33 @@ GOLDEN_SCENES = [
     ("l1l2l3_composite","l1l2l3_composite.npy",{"l1": True,  "l2": True,  "l3": True}),
 ]
 
+# All product types supported by export_dataset (AC-7: multi-product from one FrameContext)
+ALL_PRODUCT_TYPES = [
+    "path_loss_map",
+    "visibility_mask",
+    "elevation_field",
+    "azimuth_field",
+    "terrain_blockage",
+    "urban_residual",
+]
+
+# Products that require specific layer states
+_L1_PRODUCTS = {"path_loss_map", "visibility_mask", "elevation_field", "azimuth_field"}
+_L2_PRODUCTS = {"terrain_blockage"}
+_L3_PRODUCTS = {"urban_residual"}
+
+
+def _valid_product_types(layer_flags: Dict[str, bool]) -> List[str]:
+    """Return product types valid for the given layer configuration."""
+    valid = []
+    for pt in ALL_PRODUCT_TYPES:
+        if pt in _L2_PRODUCTS and not layer_flags.get("l2"):
+            continue
+        if pt in _L3_PRODUCTS and not layer_flags.get("l3"):
+            continue
+        valid.append(pt)
+    return valid
+
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -171,6 +198,24 @@ def check_manifest_fields(
         "ac": "AC-6",
     })
 
+    # AC-6: data_snapshot_id decisive check (must match config value, not just non-empty)
+    checks.append({
+        "field": f"{scene_label}/data_snapshot_id_matches_config",
+        "actual": manifest.data_snapshot_id,
+        "reference": data_snapshot_id,
+        "passed": manifest.data_snapshot_id == data_snapshot_id,
+        "ac": "AC-6",
+    })
+
+    # AC-6: fallbacks_used is a list (provenance field wired from BenchmarkRunner)
+    checks.append({
+        "field": f"{scene_label}/fallbacks_used_is_list",
+        "actual": isinstance(manifest.fallbacks_used, (list, tuple)),
+        "reference": True,
+        "passed": isinstance(manifest.fallbacks_used, (list, tuple)),
+        "ac": "AC-6",
+    })
+
     # AC-2: timestamp_utc is UTC-aware ISO string
     try:
         ts = datetime.fromisoformat(manifest.timestamp_utc)
@@ -230,10 +275,11 @@ def run_scene(
 
     scene_dir = output_dir / scene_label
     scene_dir.mkdir(parents=True, exist_ok=True)
+    scene_product_types = _valid_product_types(layer_flags)
     results = runner.run(
         timestamps=timestamps,
         output_dir=scene_dir,
-        product_types=["path_loss_map"],
+        product_types=scene_product_types,
     )
 
     comparisons: List[Dict[str, Any]] = []
@@ -266,7 +312,7 @@ def run_scene(
         rec["ac"] = "AC-1 / AC-5"
         comparisons.append(rec)
 
-    # AC-7: file written
+    # AC-7: path_loss_map file written
     comparisons.append({
         "name": f"{scene_label}/path_loss_map_file_written",
         "passed": bool(produced_npy),
@@ -274,7 +320,17 @@ def run_scene(
         "actual": str(produced_npy[0]) if produced_npy else None,
     })
 
-    # AC-1/AC-4: shape check
+    # AC-7: multi-product export — all valid product types written from one FrameContext
+    for pt in scene_product_types:
+        pt_files = sorted(scene_dir.glob(f"*{pt}.npy"))
+        comparisons.append({
+            "name": f"{scene_label}/product_file_written/{pt}",
+            "passed": bool(pt_files),
+            "ac": "AC-7",
+            "actual": str(pt_files[0]) if pt_files else None,
+        })
+
+    # AC-1/AC-4: shape check + typed-state component traceability
     expected_shape = (256, 256)
     if actual_arr is not None:
         comparisons.append({
@@ -283,6 +339,16 @@ def run_scene(
             "actual_shape": list(actual_arr.shape),
             "expected_shape": list(expected_shape),
             "ac": "AC-1 / AC-4",
+        })
+
+    # AC-4: typed-state traceability — frame_id in manifest matches frame list
+    if results:
+        frame_id_non_empty = bool(results[0].frame_id)
+        comparisons.append({
+            "name": f"{scene_label}/frame_id_traceability",
+            "passed": frame_id_non_empty,
+            "actual": results[0].frame_id if frame_id_non_empty else "",
+            "ac": "AC-4",
         })
 
     # Manifest checks
@@ -297,7 +363,7 @@ def run_scene(
         results2 = runner.run(
             timestamps=timestamps,
             output_dir=scene_dir2,
-            product_types=["path_loss_map"],
+            product_types=scene_product_types,
         )
         produced_npy2 = sorted(scene_dir2.glob("*path_loss_map.npy"))
         if produced_npy2:

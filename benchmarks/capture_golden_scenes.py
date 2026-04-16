@@ -31,6 +31,7 @@ from src.context import GridSpec, FrameBuilder
 from src.layers import L1MacroLayer, L2TopoLayer, L3UrbanLayer
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import parse_iso_utc
+from src.products.manifest import collect_input_file_paths, _sha256_dir as _sha256_dir_manifest
 
 
 def _sha256(path: Path) -> str:
@@ -155,14 +156,15 @@ def capture(config_path: str, output_dir: Path) -> None:
     logging.getLogger().removeHandler(tracker)
 
     # --- Input file hashes (repo-relative paths) ---
+    raw_input_paths = collect_input_file_paths(config)
     input_files = {}
-    for key in ["ionex_file", "era5_file", "tle_file"]:
-        val = l1_cfg.get(key)
-        if val:
-            p = Path(val)
-            input_files[key] = {"path": _repo_relative(str(p)), "sha256": _sha256(p)}
-    dem_path = Path(l2_cfg.get("dem_file", ""))
-    input_files["dem_file"] = {"path": _repo_relative(str(dem_path)), "sha256": _sha256(dem_path)}
+    for key, val in raw_input_paths.items():
+        p = Path(val)
+        if p.is_dir():
+            sha = _sha256_dir_manifest(str(p)) or "missing"
+        else:
+            sha = _sha256(p)
+        input_files[key] = {"path": _repo_relative(str(p)), "sha256": sha}
 
     # --- Output file hashes ---
     output_files = {}

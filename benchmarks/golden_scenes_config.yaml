@@ -85,6 +85,7 @@ output:
 
 data_validation:
   strict: false
+  snapshot_id: "golden_v1"
 
 performance:
   enable_profiling: false

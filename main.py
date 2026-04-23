@@ -203,15 +203,17 @@ def run_simulation(config: dict, output_dir: Path):
         frame_fallbacks = l1_layer.fallbacks_used if l1_layer is not None else []
 
         # Assemble composite map via projected composition (canonical path)
-        _grid = object.__getattribute__(frame, "grid")
+        # Use coverage.product_grid on canonical path, frame.grid on legacy path
+        _cov = object.__getattribute__(frame, "coverage")
+        _product_grid = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
         from src.compose import project_to_product_grid
         projected = project_to_product_grid(
-            product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
+            product_grid=_product_grid, entry=entry, terrain=terrain, urban=urban,
             frame_id=frame.frame_id,
         )
         msm = MultiScaleMap.compose_projected(
             frame_id=frame.frame_id,
-            product_grid=_grid,
+            product_grid=_product_grid,
             **projected,
         )
         composite_map = msm.composite_db
@@ -263,11 +265,27 @@ def run_simulation(config: dict, output_dir: Path):
                 _git_rev = _sp.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, stderr=_sp.DEVNULL).strip()
             except Exception:
                 _git_rev = "unknown"
+            # Derive provenance from real CoverageSpec and frame satellite geometry
+            _cov_dict = {}
+            _fc = object.__getattribute__(frame, "coverage")
+            if _fc is not None:
+                _cov_dict = {"l1": _fc.l1_grid.to_dict(), "l2": _fc.l2_grid.to_dict(), "product": _fc.product_grid.to_dict()}
+                if _fc.l3_grid is not None:
+                    _cov_dict["l3"] = _fc.l3_grid.to_dict()
+            _frame_contract = {
+                "frame_id": frame.frame_id,
+                "timestamp": frame.timestamp.isoformat(),
+                "norad_id": frame.norad_id,
+                "elevation_deg": frame.sat_elevation_deg,
+                "azimuth_deg": frame.sat_azimuth_deg,
+                "slant_range_m": frame.sat_slant_range_m,
+            }
             _prov = ProvenanceBlock(
                 schema_version=MANIFEST_SCHEMA_VERSION,
+                benchmark_id=data_snapshot_id if strict else "",
                 input_snapshot_hash=_sha256_dict({"snapshot": data_snapshot_id}),
-                coverage_signature=_sha256_dict({"config_hash": _sha256_dict(config)}),
-                frame_contract_hash=_sha256_dict({"frame_id": frame.frame_id, "ts": frame.timestamp.isoformat()}),
+                coverage_signature=_sha256_dict(_cov_dict),
+                frame_contract_hash=_sha256_dict(_frame_contract),
                 software_version=_git_rev,
             )
             _bm = BenchmarkMode(strict_utc=True, strict_snapshot=True, allow_fallback=False) if strict else None

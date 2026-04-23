@@ -104,3 +104,77 @@ class TestProjectionContracts:
         # Should not produce values like 180 from naive averaging of 1 and 359
         assert pv.values.min() >= 0.0
         assert pv.values.max() <= 360.0
+
+
+class TestGoldenRegressions:
+    """End-to-end golden regressions with distinct L1/L2/L3/product grids."""
+
+    def test_distinct_grids_project_and_compose(self):
+        """Drive project_to_product_grid with distinct native grids."""
+        from src.compose import project_to_product_grid
+        from src.context.coverage_spec import CoverageSpec
+
+        cs = CoverageSpec.from_config(
+            origin_lat=CENTER_LAT, origin_lon=CENTER_LON,
+            coarse_coverage_km=256.0, coarse_nx=64, coarse_ny=64,
+            product_coverage_km=25.6, product_nx=32, product_ny=32,
+            l2_coverage_km=25.6, l2_nx=64, l2_ny=64,
+            urban_coverage_km=0.256, urban_nx=64, urban_ny=64,
+        )
+        from src.context.layer_states import EntryWaveState, TerrainState, UrbanRefinementState
+        ones64 = np.ones((64, 64), dtype=np.float32)
+        entry = EntryWaveState(
+            frame_id="t", native_grid=cs.l1_grid,
+            total_loss_db=ones64 * 150, fspl_db=ones64 * 180, atm_db=ones64 * 2,
+            iono_db=ones64 * 1, pol_db=ones64 * 0.5, gain_db=ones64 * 30,
+            elevation_deg=ones64 * 45, azimuth_deg=ones64 * 180,
+            slant_range_m=ones64 * 600000, occlusion_mask=np.zeros((64, 64), dtype=bool),
+        )
+        terrain = TerrainState(
+            frame_id="t", native_grid=cs.l2_grid,
+            loss_db=ones64 * 10, occlusion_mask=np.zeros((64, 64), dtype=bool),
+        )
+        urban = UrbanRefinementState(
+            frame_id="t", native_grid=cs.l3_grid, urban_grid=cs.l3_grid,
+            urban_residual_db=ones64 * 5,
+            support_mask=np.ones((64, 64), dtype=bool),
+            nlos_mask=np.ones((64, 64), dtype=bool),
+        )
+        projected = project_to_product_grid(
+            product_grid=cs.product_grid, entry=entry, terrain=terrain, urban=urban,
+            frame_id="t",
+        )
+        msm = MultiScaleMap.compose_projected(
+            frame_id="t", product_grid=cs.product_grid, **projected,
+        )
+        assert msm.composite_db.shape == (32, 32)
+        # L1+L2 backbone = 160. L3 residual (5dB) applies only within the tiny
+        # L3 footprint (256m within 25.6km product grid), so most pixels = 160.
+        # At least one pixel near center should have L3 contribution.
+        assert msm.composite_db.min() >= 159.0
+        assert msm.composite_db.max() <= 166.0
+
+    def test_outside_urban_equals_coarse_backbone_exactly(self):
+        """Non-urban pixels must equal L1+L2 backbone exactly."""
+        pg = _grid(25.6, 32, 32, "product")
+        l1 = np.full((32, 32), 150.0, dtype=np.float32)
+        l2 = np.full((32, 32), 10.0, dtype=np.float32)
+        l3 = np.full((32, 32), 5.0, dtype=np.float32)
+        support = np.zeros((32, 32), dtype=bool)  # no urban support
+        msm = MultiScaleMap.compose_projected(
+            frame_id="t", product_grid=pg,
+            l1_loss=l1, l2_loss=l2, l3_residual=l3, l3_support=support,
+        )
+        np.testing.assert_array_equal(msm.composite_db, 160.0)
+
+    def test_grid_metadata_mismatch_raises(self):
+        """Same shape but different center must raise GridMismatchError."""
+        from src.context.multiscale_map import GridMismatchError
+        pg = _grid(25.6, 32, 32, "product")
+        different_center = GridSpec.from_legacy_args(35.0, 109.0, 25.6, 32, 32, role="l1_macro")
+        l1 = np.ones((32, 32), dtype=np.float32) * 150
+        with pytest.raises(GridMismatchError):
+            MultiScaleMap.compose_projected(
+                frame_id="t", product_grid=pg,
+                l1_loss=l1, l1_grid=different_center,
+            )

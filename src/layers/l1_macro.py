@@ -884,7 +884,9 @@ class L1MacroLayer(BaseLayer):
             elif "target_norad_ids" not in context.extras:
                 context = context.merged_with_kwargs({"target_norad_ids": [frame.norad_id]})
 
-        grid = object.__getattribute__(frame, "grid")
+        # Use coverage.l1_grid on canonical path, frame.grid on legacy path
+        _cov = object.__getattribute__(frame, "coverage")
+        grid = _cov.l1_grid if _cov is not None else object.__getattribute__(frame, "grid")
         components = self.compute_components(
             origin_lat=grid.center_lat,
             origin_lon=grid.center_lon,

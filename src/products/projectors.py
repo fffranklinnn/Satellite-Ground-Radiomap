@@ -86,7 +86,9 @@ def project(
             return multiscale.composite_db.astype(np.float32, copy=False)
         # Fallback: project and compose from states
         from src.compose import project_to_product_grid
-        _grid = object.__getattribute__(frame, "grid")
+        # Use coverage.product_grid on canonical path, frame.grid on legacy path
+        _cov = object.__getattribute__(frame, "coverage")
+        _grid = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
         projected = project_to_product_grid(
             product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
             frame_id=frame.frame_id,
@@ -213,19 +215,45 @@ def export_dataset(
                 "alt_m": frame.sat_alt_m,
             }
 
+    # Add coverage traceability to sidecar
+    _cov = object.__getattribute__(frame, "coverage")
+    if _cov is not None:
+        sidecar["coverage"] = {
+            "l1_grid": {"role": _cov.l1_grid.role, "width_m": _cov.l1_grid.width_m, "center": (_cov.l1_grid.center_lat, _cov.l1_grid.center_lon)},
+            "l2_grid": {"role": _cov.l2_grid.role, "width_m": _cov.l2_grid.width_m, "center": (_cov.l2_grid.center_lat, _cov.l2_grid.center_lon)},
+            "product_grid": {"role": _cov.product_grid.role, "width_m": _cov.product_grid.width_m, "center": (_cov.product_grid.center_lat, _cov.product_grid.center_lon)},
+        }
+        if _cov.l3_grid is not None:
+            sidecar["coverage"]["l3_grid"] = {"role": _cov.l3_grid.role, "width_m": _cov.l3_grid.width_m, "center": (_cov.l3_grid.center_lat, _cov.l3_grid.center_lon)}
+
+    from .map_product import MapProduct
     for pt in product_types:
         arr = project(
             pt, frame,
             entry=entry, terrain=terrain, urban=urban, multiscale=multiscale,
         )
+        # Build MapProduct for traceability
+        _pg = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
+        mp = MapProduct(
+            product_id=f"{frame.frame_id}_{pt}",
+            product_type=pt,
+            grid=_pg,
+            values=arr,
+            units="dB" if "loss" in pt or "residual" in pt else ("bool" if "mask" in pt else "degrees"),
+            frame_id=frame.frame_id,
+            manifest=manifest,
+        )
         fname = f"{prefix}{pt}.npy"
         fpath = out / fname
-        np.save(fpath, arr)
+        np.save(fpath, mp.values)
         written[pt] = str(fpath)
         sidecar["products"][pt] = {
             "file": fname,
-            "shape": list(arr.shape),
-            "dtype": str(arr.dtype),
+            "shape": list(mp.values.shape),
+            "dtype": str(mp.values.dtype),
+            "product_id": mp.product_id,
+            "units": mp.units,
+            "grid_role": mp.grid.role,
         }
 
     output_manifest: Optional[ProductManifest] = None

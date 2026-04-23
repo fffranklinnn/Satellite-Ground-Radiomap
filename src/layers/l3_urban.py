@@ -352,7 +352,9 @@ class L3UrbanLayer(BaseLayer):
         Returns:
             UrbanRefinementState with frame_id == frame.frame_id.
         """
-        _grid = object.__getattribute__(frame, "grid")
+        # Use coverage.l3_grid on canonical path, frame.grid on legacy path
+        _cov = object.__getattribute__(frame, "coverage")
+        _grid = _cov.l3_grid if (_cov is not None and _cov.l3_grid is not None) else object.__getattribute__(frame, "grid")
         if _grid is None:
             raise ValueError("refine_urban requires frame.grid to be set.")
 

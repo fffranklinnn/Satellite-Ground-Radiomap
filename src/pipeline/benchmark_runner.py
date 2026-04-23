@@ -131,7 +131,9 @@ class BenchmarkRunner:
 
         frame_fallbacks = list(self.l1_layer.fallbacks_used) if self.l1_layer is not None else []
 
-        _grid = object.__getattribute__(frame, "grid")
+        # Use coverage.product_grid on canonical path, frame.grid on legacy path
+        _cov = object.__getattribute__(frame, "coverage")
+        _grid = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
         from src.compose import project_to_product_grid
         projected = project_to_product_grid(
             product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
@@ -150,12 +152,27 @@ class BenchmarkRunner:
         except Exception:
             git_rev = "unknown"
 
+        # Derive provenance from real CoverageSpec and frame satellite geometry
+        _cov_dict = {}
+        _fc = object.__getattribute__(frame, "coverage")
+        if _fc is not None:
+            _cov_dict = {"l1": _fc.l1_grid.to_dict(), "l2": _fc.l2_grid.to_dict(), "product": _fc.product_grid.to_dict()}
+            if _fc.l3_grid is not None:
+                _cov_dict["l3"] = _fc.l3_grid.to_dict()
+        _frame_contract = {
+            "frame_id": frame.frame_id,
+            "timestamp": frame.timestamp.isoformat(),
+            "norad_id": frame.norad_id,
+            "elevation_deg": frame.sat_elevation_deg,
+            "azimuth_deg": frame.sat_azimuth_deg,
+            "slant_range_m": frame.sat_slant_range_m,
+        }
         prov = ProvenanceBlock(
             schema_version=MANIFEST_SCHEMA_VERSION,
             benchmark_id=self.data_snapshot_id,
             input_snapshot_hash=_sha256_dict({"snapshot": self.data_snapshot_id}),
-            coverage_signature=_sha256_dict({"config_hash": _sha256_dict(self.config)}),
-            frame_contract_hash=_sha256_dict({"frame_id": frame.frame_id, "ts": frame.timestamp.isoformat()}),
+            coverage_signature=_sha256_dict(_cov_dict),
+            frame_contract_hash=_sha256_dict(_frame_contract),
             software_version=git_rev,
         )
         _strict = bool(self.config.get('data_validation', {}).get('strict', False))

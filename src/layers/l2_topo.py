@@ -422,8 +422,9 @@ class L2TopoLayer(BaseLayer):
         Returns:
             TerrainState with frame_id == frame.frame_id.
         """
-        if object.__getattribute__(frame, "grid") is None:
-            raise ValueError("propagate_terrain requires frame.grid to be set.")
+        _cov = object.__getattribute__(frame, "coverage")
+        if _cov is None and object.__getattribute__(frame, "grid") is None:
+            raise ValueError("propagate_terrain requires frame.grid or frame.coverage to be set.")
 
         # Validate entry frame_id consistency
         if entry is not None:
@@ -469,8 +470,9 @@ class L2TopoLayer(BaseLayer):
         else:
             merged = LayerContext(extras=ctx_extras)
 
-        # L2 uses SW corner as origin (legacy convention)
-        _grid = object.__getattribute__(frame, "grid")
+        # Use coverage.l2_grid on canonical path, frame.grid on legacy path
+        _cov = object.__getattribute__(frame, "coverage")
+        _grid = _cov.l2_grid if _cov is not None else object.__getattribute__(frame, "grid")
         sw_lat, sw_lon = _grid.sw_corner()
 
         loss_db = self.compute(

@@ -263,15 +263,16 @@ def compute_satellite_maps(
     l1_map = entry.total_loss_db
     l2_map = terrain.loss_db
     l3_map = urban.urban_residual_db
-    _grid = object.__getattribute__(frame, "grid")
+    _cov = object.__getattribute__(frame, "coverage")
+    _product_grid = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
     from src.compose import project_to_product_grid
     projected = project_to_product_grid(
-        product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
+        product_grid=_product_grid, entry=entry, terrain=terrain, urban=urban,
         frame_id=frame.frame_id,
     )
     msm = MultiScaleMap.compose_projected(
         frame_id=frame.frame_id,
-        product_grid=_grid,
+        product_grid=_product_grid,
         **projected,
     )
     total_map = msm.composite_db

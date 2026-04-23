@@ -189,6 +189,8 @@ class L2TopoLayer(BaseLayer):
             f"[L2] Done | occluded={core_occlusion.mean()*100:.1f}% | "
             f"loss={loss_db.min():.1f}~{loss_db.max():.1f} dB"
         )
+        # Cache geometric occlusion for propagate_terrain() to use
+        self._last_geometric_occlusion = core_occlusion
         return loss_db
 
     def _estimate_slant_range_km(self, sat_elevation_deg: float, sat_altitude_km: float) -> float:
@@ -476,8 +478,12 @@ class L2TopoLayer(BaseLayer):
             **kwargs,
         )
 
-        # Reconstruct occlusion mask: pixels at max diffraction loss are occluded
-        occlusion_mask = loss_db >= self.MAX_DIFFRACTION_LOSS_DB
+        # Use geometric occlusion from L2 computation (not loss threshold)
+        if hasattr(self, '_last_geometric_occlusion') and self._last_geometric_occlusion is not None:
+            occlusion_mask = self._last_geometric_occlusion
+        else:
+            # Fallback for legacy callers that bypass compute()
+            occlusion_mask = loss_db >= self.MAX_DIFFRACTION_LOSS_DB
 
         return TerrainState(
             frame_id=frame.frame_id,

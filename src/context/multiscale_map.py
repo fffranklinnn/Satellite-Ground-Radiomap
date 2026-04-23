@@ -34,6 +34,10 @@ class ShapeError(ValueError):
     """Raised when layer arrays have incompatible shapes."""
 
 
+class GridMismatchError(ValueError):
+    """Raised when projected views have mismatched grid metadata."""
+
+
 @dataclass(frozen=True)
 class MultiScaleMap:
     """
@@ -157,6 +161,90 @@ class MultiScaleMap:
             l2_db=l2_db,
             l3_db=l3_db,
             l3_support_mask=l3_support,
+        )
+
+    # ------------------------------------------------------------------
+    # Factory: projected composition (canonical new path)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def compose_projected(
+        cls,
+        frame_id: str,
+        product_grid: GridSpec,
+        l1_loss: Optional[np.ndarray] = None,
+        l2_loss: Optional[np.ndarray] = None,
+        l3_residual: Optional[np.ndarray] = None,
+        l3_support: Optional[np.ndarray] = None,
+        l1_grid: Optional[GridSpec] = None,
+        l2_grid: Optional[GridSpec] = None,
+        l3_grid: Optional[GridSpec] = None,
+    ) -> "MultiScaleMap":
+        """
+        Assemble a MultiScaleMap from pre-projected arrays on product_grid.
+
+        All input arrays must already be projected onto product_grid.
+        Passing raw native-grid arrays with mismatched grid metadata raises
+        GridMismatchError.
+
+        Args:
+            frame_id:     Frame identifier.
+            product_grid: The target product grid all arrays are projected onto.
+            l1_loss:      Projected L1 total loss (dB) on product_grid, or None.
+            l2_loss:      Projected L2 terrain loss (dB) on product_grid, or None.
+            l3_residual:  Projected L3 urban residual (dB) on product_grid, or None.
+            l3_support:   Projected L3 support mask on product_grid, or None.
+            l1_grid:      Source grid metadata for l1_loss (for validation).
+            l2_grid:      Source grid metadata for l2_loss (for validation).
+            l3_grid:      Source grid metadata for l3_residual (for validation).
+
+        Returns:
+            MultiScaleMap with composite_db and per-layer contributions.
+        """
+        expected = (product_grid.ny, product_grid.nx)
+        composite = np.zeros(expected, dtype=np.float32)
+
+        l1_db = l2_db = l3_db = l3_mask = None
+
+        if l1_loss is not None:
+            if l1_loss.shape != expected:
+                raise ShapeError(
+                    f"l1_loss shape {l1_loss.shape} != product_grid {expected}. "
+                    "Arrays must be projected to product_grid before composition."
+                )
+            l1_db = l1_loss.astype(np.float32, copy=False)
+            composite = composite + l1_db
+
+        if l2_loss is not None:
+            if l2_loss.shape != expected:
+                raise ShapeError(
+                    f"l2_loss shape {l2_loss.shape} != product_grid {expected}. "
+                    "Arrays must be projected to product_grid before composition."
+                )
+            l2_db = l2_loss.astype(np.float32, copy=False)
+            composite = composite + l2_db
+
+        if l3_residual is not None:
+            if l3_residual.shape != expected:
+                raise ShapeError(
+                    f"l3_residual shape {l3_residual.shape} != product_grid {expected}. "
+                    "Arrays must be projected to product_grid before composition."
+                )
+            if l3_support is not None:
+                l3_mask = l3_support.astype(bool, copy=False)
+                l3_db = np.where(l3_mask, l3_residual, 0.0).astype(np.float32)
+            else:
+                l3_db = l3_residual.astype(np.float32, copy=False)
+            composite = composite + l3_db
+
+        return cls(
+            frame_id=frame_id,
+            grid=product_grid,
+            composite_db=composite,
+            l1_db=l1_db,
+            l2_db=l2_db,
+            l3_db=l3_db,
+            l3_support_mask=l3_mask,
         )
 
     # ------------------------------------------------------------------

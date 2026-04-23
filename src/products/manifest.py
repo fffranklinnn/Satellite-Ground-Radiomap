@@ -24,6 +24,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.context.time_utils import StrictModeError
+
+
+MANIFEST_SCHEMA_VERSION = "2.0"
+
 
 def _sha256_file(path: str) -> str:
     """Compute SHA-256 hex digest of a file."""
@@ -65,42 +70,54 @@ def _sha256_dict(d: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def collect_input_file_paths(config: dict) -> Dict[str, str]:
+def collect_input_file_paths(config: dict, strict: bool = False) -> Dict[str, str]:
     """
     Extract configured input data file paths from a mission config dict.
 
-    Returns a {label: path_str} mapping for all configured data files
-    (TLE, IONEX, ERA5, DEM, L3 tiles). Missing or unconfigured keys are
-    silently omitted so callers can pass the result directly to
-    ProductManifest.build(input_files=..., hash_files=True).
+    Returns a {label: path_str} mapping for all configured data files.
+
+    In strict (benchmark) mode:
+    - Configured but missing files raise StrictModeError
+    - Unconfigured optional inputs are silently skipped (no error)
+
+    In normal mode:
+    - Configured but missing files emit a warning
+    - Unconfigured optional inputs are silently skipped
     """
+    import warnings
     paths: Dict[str, str] = {}
     layers = config.get("layers", {})
 
-    # L1 inputs
-    l1 = layers.get("l1_macro", {})
-    tle_cfg = l1.get("tle", {})
-    tle_file = (tle_cfg.get("file") if isinstance(tle_cfg, dict) else None) or l1.get("tle_file")
-    if tle_file:
-        paths["tle_file"] = str(tle_file)
-    ionex_file = l1.get("ionex_file")
-    if ionex_file:
-        paths["ionex_file"] = str(ionex_file)
-    era5_file = l1.get("era5_file")
-    if era5_file:
-        paths["era5_file"] = str(era5_file)
+    # Define expected input sources
+    _INPUT_SOURCES = [
+        ("l1_macro", "tle", lambda l1: (l1.get("tle", {}).get("file") if isinstance(l1.get("tle"), dict) else None) or l1.get("tle_file"), "tle_file"),
+        ("l1_macro", "ionex", lambda l1: l1.get("ionex_file"), "ionex_file"),
+        ("l1_macro", "era5", lambda l1: l1.get("era5_file"), "era5_file"),
+        ("l2_topo", "dem", lambda l2: l2.get("dem_file"), "dem_file"),
+        ("l3_urban", "tiles", lambda l3: l3.get("tile_cache_root") or l3.get("data_dir") or l3.get("tiles_dir"), "tile_cache_root"),
+    ]
 
-    # L2 inputs
-    l2 = layers.get("l2_topo", {})
-    dem_file = l2.get("dem_file")
-    if dem_file:
-        paths["dem_file"] = str(dem_file)
-
-    # L3 inputs
-    l3 = layers.get("l3_urban", {})
-    l3_data_dir = l3.get("tile_cache_root") or l3.get("data_dir") or l3.get("tiles_dir")
-    if l3_data_dir:
-        paths["tile_cache_root"] = str(l3_data_dir)
+    for layer_key, source_name, extractor, label in _INPUT_SOURCES:
+        layer_cfg = layers.get(layer_key, {})
+        path_str = extractor(layer_cfg)
+        if path_str is None:
+            continue  # Unconfigured optional — silently skip
+        path_str = str(path_str)
+        p = Path(path_str)
+        if not p.exists():
+            if strict:
+                raise StrictModeError(
+                    f"Configured input '{label}' not found: {path_str}. "
+                    f"In benchmark mode, all configured inputs must be present."
+                )
+            else:
+                warnings.warn(
+                    f"Configured input '{label}' not found: {path_str}. "
+                    f"Hash will be empty.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        paths[label] = path_str
 
     return paths
 
@@ -142,6 +159,60 @@ def _deep_thaw(obj: Any) -> Any:
 
 
 @dataclass(frozen=True)
+class ProvenanceBlock:
+    """Versioned provenance metadata nested within ProductManifest."""
+    schema_version: str = MANIFEST_SCHEMA_VERSION
+    benchmark_id: str = ""
+    input_snapshot_hash: str = ""
+    coverage_signature: str = ""
+    frame_contract_hash: str = ""
+    software_version: str = ""
+
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "schema_version": self.schema_version,
+            "benchmark_id": self.benchmark_id,
+            "input_snapshot_hash": self.input_snapshot_hash,
+            "coverage_signature": self.coverage_signature,
+            "frame_contract_hash": self.frame_contract_hash,
+            "software_version": self.software_version,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ProvenanceBlock":
+        return cls(**{k: str(v) for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass(frozen=True)
+class BenchmarkMode:
+    """Strict validation flags for benchmark-grade reproducibility."""
+    strict_utc: bool = True
+    strict_snapshot: bool = True
+    allow_fallback: bool = False
+
+    def validate_manifest_inputs(
+        self,
+        timestamp_utc: str,
+        data_snapshot_id: str,
+        fallbacks_used: List[str],
+    ) -> None:
+        """Validate manifest inputs against benchmark strictness."""
+        if self.strict_utc:
+            from src.context.time_utils import parse_iso_utc
+            parse_iso_utc(timestamp_utc, strict=True)
+
+        if self.strict_snapshot and not data_snapshot_id:
+            raise StrictModeError(
+                "BenchmarkMode requires a non-empty data_snapshot_id."
+            )
+
+        if not self.allow_fallback and fallbacks_used:
+            raise StrictModeError(
+                f"BenchmarkMode does not allow fallbacks: {fallbacks_used}"
+            )
+
+
+@dataclass(frozen=True)
 class ProductManifest:
     """
     Immutable provenance record for a simulation product.
@@ -165,6 +236,7 @@ class ProductManifest:
     output_file_hashes: Dict[str, str] = field(default_factory=dict)
     fallbacks_used: Tuple[str, ...] = field(default_factory=tuple)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    provenance: Optional[ProvenanceBlock] = None
 
     def __post_init__(self) -> None:
         # Recursively freeze all container fields so nested provenance payloads
@@ -180,7 +252,7 @@ class ProductManifest:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a JSON-compatible dict."""
-        return {
+        d = {
             "frame_id": self.frame_id,
             "timestamp_utc": self.timestamp_utc,
             "config_hash": self.config_hash,
@@ -190,6 +262,9 @@ class ProductManifest:
             "fallbacks_used": list(self.fallbacks_used),
             "metadata": _deep_thaw(self.metadata),
         }
+        if self.provenance is not None:
+            d["provenance"] = self.provenance.to_dict()
+        return d
 
     def to_json(self, indent: Optional[int] = None) -> str:
         """Serialize to a JSON string."""
@@ -198,6 +273,9 @@ class ProductManifest:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "ProductManifest":
         """Deserialize from a dict (inverse of to_dict)."""
+        prov = None
+        if "provenance" in d and d["provenance"] is not None:
+            prov = ProvenanceBlock.from_dict(d["provenance"])
         return cls(
             frame_id=str(d["frame_id"]),
             timestamp_utc=str(d["timestamp_utc"]),
@@ -207,6 +285,7 @@ class ProductManifest:
             output_file_hashes=dict(d.get("output_file_hashes", {})),
             fallbacks_used=list(d.get("fallbacks_used", [])),
             metadata=dict(d.get("metadata", {})),
+            provenance=prov,
         )
 
     @classmethod

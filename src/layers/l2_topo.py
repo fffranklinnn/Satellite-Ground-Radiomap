@@ -146,6 +146,8 @@ class L2TopoLayer(BaseLayer):
             256x256 float32 array of terrain loss in dB (>= 0).
             Returns zero-loss map when no DEM file is configured.
         """
+        # Reset cached geometric occlusion to prevent stale state leaking across calls
+        self._last_geometric_occlusion = None
         if origin_lat is None:
             origin_lat = self.origin_lat
         if origin_lon is None:
@@ -420,7 +422,7 @@ class L2TopoLayer(BaseLayer):
         Returns:
             TerrainState with frame_id == frame.frame_id.
         """
-        if frame.grid is None:
+        if object.__getattribute__(frame, "grid") is None:
             raise ValueError("propagate_terrain requires frame.grid to be set.")
 
         # Validate entry frame_id consistency
@@ -468,7 +470,8 @@ class L2TopoLayer(BaseLayer):
             merged = LayerContext(extras=ctx_extras)
 
         # L2 uses SW corner as origin (legacy convention)
-        sw_lat, sw_lon = frame.grid.sw_corner()
+        _grid = object.__getattribute__(frame, "grid")
+        sw_lat, sw_lon = _grid.sw_corner()
 
         loss_db = self.compute(
             origin_lat=sw_lat,
@@ -487,7 +490,7 @@ class L2TopoLayer(BaseLayer):
 
         return TerrainState(
             frame_id=frame.frame_id,
-            grid=frame.grid,
+            grid=_grid,
             loss_db=loss_db,
             occlusion_mask=occlusion_mask,
         )

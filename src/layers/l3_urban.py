@@ -290,6 +290,8 @@ class L3UrbanLayer(BaseLayer):
         Returns:
             256x256 float32 loss array in dB.
         """
+        # Reset cached tile height to prevent stale state leaking across calls
+        self._last_tile_height = None
         if origin_lat is None:
             origin_lat = self.origin_lat
         if origin_lon is None:
@@ -350,7 +352,8 @@ class L3UrbanLayer(BaseLayer):
         Returns:
             UrbanRefinementState with frame_id == frame.frame_id.
         """
-        if frame.grid is None:
+        _grid = object.__getattribute__(frame, "grid")
+        if _grid is None:
             raise ValueError("refine_urban requires frame.grid to be set.")
 
         # Validate entry frame_id consistency
@@ -381,8 +384,8 @@ class L3UrbanLayer(BaseLayer):
             )
 
         loss_db = self.compute(
-            origin_lat=frame.grid.center_lat,
-            origin_lon=frame.grid.center_lon,
+            origin_lat=_grid.center_lat,
+            origin_lon=_grid.center_lon,
             timestamp=frame.timestamp,
             context=ctx,
         )
@@ -408,8 +411,8 @@ class L3UrbanLayer(BaseLayer):
 
         return UrbanRefinementState(
             frame_id=frame.frame_id,
-            grid=frame.grid,
-            urban_grid=frame.grid,
+            grid=_grid,
+            urban_grid=_grid,
             urban_residual_db=loss_db,
             support_mask=support_mask,
             nlos_mask=nlos_mask,

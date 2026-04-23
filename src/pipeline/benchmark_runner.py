@@ -94,7 +94,28 @@ class BenchmarkRunner:
         Returns:
             ProductManifest with output file hashes.
         """
-        frame = self.frame_builder.build(timestamp)
+        # Select satellite before building frame (canonical path)
+        sat_info = None
+        if self.l1_layer is not None:
+            try:
+                from src.planning.satellite_selector import SatelliteSelector
+                tle_cfg = self.config.get('layers', {}).get('l1_macro', {}).get('tle', {})
+                tle_path = (tle_cfg.get('file') if isinstance(tle_cfg, dict) else None) or self.config.get('layers', {}).get('l1_macro', {}).get('tle_file', '')
+                if tle_path:
+                    selector = SatelliteSelector(tle_path, strict=True)
+                    target_ids = self.config.get('layers', {}).get('l1_macro', {}).get('target_norad_ids')
+                    if target_ids:
+                        target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
+                    origin = self.config.get('origin', {})
+                    sat_info = selector.select(
+                        timestamp=timestamp,
+                        center=(origin.get('latitude', 0), origin.get('longitude', 0)),
+                        target_ids=target_ids,
+                    )
+            except Exception:
+                pass  # Fall back to L1 internal selection
+
+        frame = self.frame_builder.build(timestamp, sat_info=sat_info)
 
         if self.l1_layer is not None:
             self.l1_layer.clear_fallbacks()

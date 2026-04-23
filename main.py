@@ -167,8 +167,31 @@ def run_simulation(config: dict, output_dir: Path):
 
         sim_logger.log_layer_start("FramePipeline", current_time)
 
-        # Build frame — sat_info populated by L1 internally during propagate_entry
-        frame = frame_builder.build(current_time)
+        # Select satellite before building frame (canonical path)
+        sat_info = None
+        if l1_layer is not None:
+            try:
+                from src.planning.satellite_selector import SatelliteSelector
+                tle_path = config['layers'].get('l1_macro', {}).get('tle', {})
+                if isinstance(tle_path, dict):
+                    tle_path = tle_path.get('file', '')
+                tle_path = tle_path or config['layers'].get('l1_macro', {}).get('tle_file', '')
+                if tle_path:
+                    selector = SatelliteSelector(tle_path, strict=strict, min_elevation_deg=5.0)
+                    target_ids = config['layers'].get('l1_macro', {}).get('target_norad_ids')
+                    if target_ids:
+                        target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
+                    sat_info = selector.select(
+                        timestamp=current_time,
+                        center=(config['origin']['latitude'], config['origin']['longitude']),
+                        target_ids=target_ids,
+                        strict=strict,
+                    )
+            except Exception as e:
+                logger.warning(f"SatelliteSelector failed: {e}. Falling back to L1 internal selection.")
+
+        # Build frame with pre-bound satellite geometry
+        frame = frame_builder.build(current_time, sat_info=sat_info)
 
         # Clear per-frame fallback accumulator before propagation
         if l1_layer is not None:

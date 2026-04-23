@@ -207,3 +207,38 @@ class TestDeprecatedAccess:
             _ = cs.target_product_grid
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
+
+    def test_frame_grid_warns_on_strict_path(self):
+        """AC-1 negative: accessing frame.grid on strict path emits DeprecationWarning."""
+        from datetime import datetime, timezone
+        from src.context.frame_context import FrameContext
+        cs = _make_coverage()
+        g = cs.l1_grid
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        frame = FrameContext(
+            frame_id="test", timestamp=ts, grid=g, coverage=cs,
+            norad_id="12345", sat_elevation_deg=45.0, strict=True,
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _ = frame.grid
+            depr = [x for x in w if issubclass(x.category, DeprecationWarning)
+                    and "deprecated" in str(x.message).lower()]
+            assert len(depr) == 1, f"Expected 1 deprecation warning, got {len(depr)}"
+
+    def test_frame_grid_no_warn_on_non_strict(self):
+        """Non-strict path does not warn on frame.grid access."""
+        from datetime import datetime, timezone
+        from src.context.frame_context import FrameContext
+        cs = _make_coverage()
+        g = cs.l1_grid
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        frame = FrameContext(
+            frame_id="test", timestamp=ts, grid=g, coverage=cs, strict=False,
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _ = frame.grid
+            depr = [x for x in w if issubclass(x.category, DeprecationWarning)
+                    and "frame" in str(x.message).lower()]
+            assert len(depr) == 0

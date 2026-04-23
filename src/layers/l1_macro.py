@@ -868,28 +868,34 @@ class L1MacroLayer(BaseLayer):
         """
         Compute L1 entry-wave propagation for a FrameContext frame.
 
+        On the canonical path (frame has pre-bound satellite geometry via
+        SatelliteSelector), L1 uses the frame's satellite. On the legacy
+        path (no sat_info), L1 selects internally.
+
         Returns an EntryWaveState carrying all component maps and satellite
         geometry. The frame_id is propagated into the state for downstream
         consistency checks.
-
-        Args:
-            frame:   FrameContext for this simulation frame.
-            context: Optional LayerContext for extra parameters.
-
-        Returns:
-            EntryWaveState with frame_id == frame.frame_id.
         """
+        # If frame has pre-bound satellite, constrain L1 to use it
+        extra_kwargs = dict(kwargs)
+        if frame.norad_id is not None:
+            if context is None:
+                context = LayerContext(extras={"target_norad_ids": [frame.norad_id]})
+            elif "target_norad_ids" not in context.extras:
+                context = context.merged_with_kwargs({"target_norad_ids": [frame.norad_id]})
+
+        grid = object.__getattribute__(frame, "grid")
         components = self.compute_components(
-            origin_lat=frame.grid.center_lat,
-            origin_lon=frame.grid.center_lon,
+            origin_lat=grid.center_lat,
+            origin_lon=grid.center_lon,
             timestamp=frame.timestamp,
             context=context,
-            **kwargs,
+            **extra_kwargs,
         )
         sat = components.get("satellite", {})
         return EntryWaveState(
             frame_id=frame.frame_id,
-            grid=frame.grid,
+            grid=grid,
             total_loss_db=components["total"],
             fspl_db=components["fspl"],
             atm_db=components["atm"],

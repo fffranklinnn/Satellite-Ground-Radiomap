@@ -59,23 +59,38 @@ class FrameContext:
     strict: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.grid, GridSpec):
-            raise TypeError(f"FrameContext.grid must be a GridSpec, got {type(self.grid)!r}")
-        if self.timestamp.tzinfo is None:
+        grid = object.__getattribute__(self, "grid")
+        if not isinstance(grid, GridSpec):
+            raise TypeError(f"FrameContext.grid must be a GridSpec, got {type(grid)!r}")
+        ts = object.__getattribute__(self, "timestamp")
+        if ts.tzinfo is None:
             raise ValueError(
-                f"FrameContext.timestamp must be timezone-aware UTC, got naive {self.timestamp!r}. "
+                f"FrameContext.timestamp must be timezone-aware UTC, got naive {ts!r}. "
                 "Use datetime.now(timezone.utc) or attach tzinfo=timezone.utc."
             )
-        # Normalize to UTC
-        object.__setattr__(self, "timestamp", self.timestamp.astimezone(timezone.utc))
+        object.__setattr__(self, "timestamp", ts.astimezone(timezone.utc))
 
-        if self.strict:
-            if self.coverage is None:
+        strict = object.__getattribute__(self, "strict")
+        if strict:
+            if object.__getattribute__(self, "coverage") is None:
                 raise ValueError("FrameContext requires coverage in strict mode.")
-            if self.norad_id is None:
+            if object.__getattribute__(self, "norad_id") is None:
                 raise ValueError("FrameContext requires norad_id in strict mode.")
-            if self.sat_elevation_deg is None:
+            if object.__getattribute__(self, "sat_elevation_deg") is None:
                 raise ValueError("FrameContext requires sat_elevation_deg in strict mode.")
+
+    def __getattribute__(self, name: str):
+        if name == "grid":
+            # Emit deprecation warning when accessing frame.grid on strict path
+            strict = object.__getattribute__(self, "strict")
+            if strict:
+                warnings.warn(
+                    "FrameContext.grid is deprecated on the canonical strict path. "
+                    "Use frame.coverage.l1_grid, frame.coverage.l2_grid, etc. instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+        return object.__getattribute__(self, name)
 
     def check_frame_id(self, state_frame_id: str) -> None:
         """Raise FrameMismatchError if state_frame_id does not match this frame."""
@@ -86,9 +101,12 @@ class FrameContext:
             )
 
     def __repr__(self) -> str:
-        ts = self.timestamp.isoformat()
+        ts = object.__getattribute__(self, "timestamp").isoformat()
+        grid = object.__getattribute__(self, "grid")
+        norad = object.__getattribute__(self, "norad_id")
+        fid = object.__getattribute__(self, "frame_id")
         return (
-            f"FrameContext(id={self.frame_id!r} ts={ts} "
-            f"grid={self.grid.nx}x{self.grid.ny} "
-            f"norad={self.norad_id})"
+            f"FrameContext(id={fid!r} ts={ts} "
+            f"grid={grid.nx}x{grid.ny} "
+            f"norad={norad})"
         )

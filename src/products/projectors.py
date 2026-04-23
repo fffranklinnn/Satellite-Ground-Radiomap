@@ -81,21 +81,22 @@ def project(
             f"Supported types: {sorted(_PRODUCT_TYPES)}"
         )
 
+    # Helper: get product grid and project a field
+    from src.compose import project_field, FieldType
+    _cov = object.__getattribute__(frame, "coverage")
+    _product_grid = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
+
     if product_type == "path_loss_map":
         if multiscale is not None:
             return multiscale.composite_db.astype(np.float32, copy=False)
-        # Fallback: project and compose from states
         from src.compose import project_to_product_grid
-        # Use coverage.product_grid on canonical path, frame.grid on legacy path
-        _cov = object.__getattribute__(frame, "coverage")
-        _grid = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
         projected = project_to_product_grid(
-            product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
+            product_grid=_product_grid, entry=entry, terrain=terrain, urban=urban,
             frame_id=frame.frame_id,
         )
         msm = MultiScaleMap.compose_projected(
             frame_id=frame.frame_id,
-            product_grid=_grid,
+            product_grid=_product_grid,
             **projected,
         )
         return msm.composite_db
@@ -103,27 +104,32 @@ def project(
     if product_type == "visibility_mask":
         if entry is None:
             raise ValueError("visibility_mask requires EntryWaveState (entry).")
-        return (~entry.occlusion_mask).astype(np.bool_)
+        pv = project_field((~entry.occlusion_mask).astype(np.float64), entry.native_grid, _product_grid, FieldType.VISIBILITY_MASK, frame.frame_id)
+        return pv.values
 
     if product_type == "elevation_field":
         if entry is None:
             raise ValueError("elevation_field requires EntryWaveState (entry).")
-        return entry.elevation_deg.astype(np.float32, copy=False)
+        pv = project_field(entry.elevation_deg, entry.native_grid, _product_grid, FieldType.ELEVATION_DEG, frame.frame_id)
+        return pv.values
 
     if product_type == "azimuth_field":
         if entry is None:
             raise ValueError("azimuth_field requires EntryWaveState (entry).")
-        return entry.azimuth_deg.astype(np.float32, copy=False)
+        pv = project_field(entry.azimuth_deg, entry.native_grid, _product_grid, FieldType.AZIMUTH_DEG, frame.frame_id)
+        return pv.values
 
     if product_type == "terrain_blockage":
         if terrain is None:
             raise ValueError("terrain_blockage requires TerrainState (terrain).")
-        return terrain.occlusion_mask.astype(np.bool_)
+        pv = project_field(terrain.occlusion_mask.astype(np.float64), terrain.native_grid, _product_grid, FieldType.BOOLEAN_MASK, frame.frame_id)
+        return pv.values
 
     if product_type == "urban_residual":
         if urban is None:
             raise ValueError("urban_residual requires UrbanRefinementState (urban).")
-        return urban.urban_residual_db.astype(np.float32, copy=False)
+        pv = project_field(urban.urban_residual_db, urban.native_grid, _product_grid, FieldType.LOSS_DB, frame.frame_id)
+        return pv.values
 
     # Should never reach here given the guard above
     raise UnknownProductTypeError(f"Unhandled product type: {product_type!r}")
@@ -227,19 +233,18 @@ def export_dataset(
             sidecar["coverage"]["l3_grid"] = {"role": _cov.l3_grid.role, "width_m": _cov.l3_grid.width_m, "center": (_cov.l3_grid.center_lat, _cov.l3_grid.center_lon)}
 
     from .map_product import MapProduct
+    _pg = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
     for pt in product_types:
         arr = project(
             pt, frame,
             entry=entry, terrain=terrain, urban=urban, multiscale=multiscale,
         )
-        # Build MapProduct for traceability
-        _pg = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
         mp = MapProduct(
             product_id=f"{frame.frame_id}_{pt}",
             product_type=pt,
             grid=_pg,
             values=arr,
-            units="dB" if "loss" in pt or "residual" in pt else ("bool" if "mask" in pt else "degrees"),
+            units="dB" if "loss" in pt or "residual" in pt else ("bool" if "mask" in pt or "blockage" in pt else "degrees"),
             frame_id=frame.frame_id,
             manifest=manifest,
         )
@@ -247,6 +252,11 @@ def export_dataset(
         fpath = out / fname
         np.save(fpath, mp.values)
         written[pt] = str(fpath)
+        # Use MapProduct.to_traceability_dict() for full per-product provenance
+        try:
+            td = mp.to_traceability_dict()
+        except Exception:
+            td = {}
         sidecar["products"][pt] = {
             "file": fname,
             "shape": list(mp.values.shape),
@@ -254,6 +264,7 @@ def export_dataset(
             "product_id": mp.product_id,
             "units": mp.units,
             "grid_role": mp.grid.role,
+            **{k: v for k, v in td.items() if k not in ("product_id", "units", "grid_role", "shape", "dtype")},
         }
 
     output_manifest: Optional[ProductManifest] = None

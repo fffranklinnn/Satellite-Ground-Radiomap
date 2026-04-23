@@ -103,17 +103,30 @@ def resolve_path(project_root: Path, value: Optional[str]) -> Optional[Path]:
 
 
 def build_frame_builder_for_script(config: dict, origin_lat: float, origin_lon: float) -> FrameBuilder:
-    """Build a FrameBuilder from config and resolved origin coordinates."""
+    """Build a FrameBuilder from config with real L1/L2/L3/product coverage geometry."""
     l1_cfg = config.get("layers", {}).get("l1_macro", {})
     coarse_km = float(l1_cfg.get("coverage_km", 256.0))
     grid_size = int(l1_cfg.get("grid_size", 256))
-    grid = GridSpec.from_legacy_args(origin_lat, origin_lon, coarse_km, grid_size, grid_size)
+
+    l2_cfg = config.get("layers", {}).get("l2_topo", {})
+    l2_km = float(l2_cfg.get("coverage_km", 25.6))
+    l2_nx = int(l2_cfg.get("grid_size", 256))
+
+    l3_cfg = config.get("layers", {}).get("l3_urban", {})
+    l3_enabled = l3_cfg.get("enabled", False)
+    l3_km = float(l3_cfg.get("coverage_km", 0.256)) if l3_enabled else None
+    l3_nx = int(l3_cfg.get("grid_size", 256)) if l3_enabled else None
+
     product_km = float(config.get("product", {}).get("coverage_km", 0.256))
     product_nx = int(config.get("product", {}).get("grid_size", 256))
+
+    grid = GridSpec.from_legacy_args(origin_lat, origin_lon, coarse_km, grid_size, grid_size)
     coverage = CoverageSpec.from_config(
         origin_lat=origin_lat, origin_lon=origin_lon,
         coarse_coverage_km=coarse_km, coarse_nx=grid_size, coarse_ny=grid_size,
         product_coverage_km=product_km, product_nx=product_nx, product_ny=product_nx,
+        l2_coverage_km=l2_km, l2_nx=l2_nx, l2_ny=l2_nx,
+        urban_coverage_km=l3_km, urban_nx=l3_nx, urban_ny=l3_nx,
     )
     return FrameBuilder(grid=grid, coverage=coverage)
 

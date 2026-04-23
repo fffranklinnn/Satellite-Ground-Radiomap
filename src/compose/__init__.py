@@ -115,11 +115,15 @@ def project_field(
     Enforces per-field-type interpolation contracts.
     """
     if source_grid == target_grid:
+        # Identity projection — ensure correct dtype for boolean fields
+        vals = source_array.copy()
+        if field_type in (FieldType.BOOLEAN_MASK, FieldType.VISIBILITY_MASK, FieldType.SUPPORT_MASK):
+            vals = vals > 0.5 if vals.dtype != bool else vals
         return ProjectedView(
             source_grid=source_grid,
             product_grid=target_grid,
             field_type=field_type,
-            values=source_array.copy(),
+            values=vals,
             frame_id=frame_id,
         )
 

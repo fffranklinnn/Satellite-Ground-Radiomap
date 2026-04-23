@@ -201,6 +201,25 @@ class MultiScaleMap:
         Returns:
             MultiScaleMap with composite_db and per-layer contributions.
         """
+        # Validate grid metadata consistency
+        for label, arr, src_grid in [
+            ("l1_loss", l1_loss, l1_grid),
+            ("l2_loss", l2_loss, l2_grid),
+            ("l3_residual", l3_residual, l3_grid),
+        ]:
+            if arr is not None and src_grid is not None:
+                # If source grid has different shape than product_grid but array
+                # matches product_grid shape, projection happened — OK.
+                # If source grid has same shape as product_grid but different
+                # center/resolution, that's a metadata mismatch.
+                if (src_grid.nx == product_grid.nx and src_grid.ny == product_grid.ny
+                        and not src_grid.same_center(product_grid)):
+                    raise GridMismatchError(
+                        f"{label}: source grid and product_grid have matching shape "
+                        f"({src_grid.nx}x{src_grid.ny}) but different centers. "
+                        f"This suggests raw native-grid arrays were passed without projection."
+                    )
+
         expected = (product_grid.ny, product_grid.nx)
         composite = np.zeros(expected, dtype=np.float32)
 

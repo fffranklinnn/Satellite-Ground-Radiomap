@@ -309,6 +309,8 @@ class ProductManifest:
         fallbacks_used: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         hash_files: bool = False,
+        provenance: Optional[ProvenanceBlock] = None,
+        benchmark_mode: Optional[BenchmarkMode] = None,
     ) -> "ProductManifest":
         """
         Build a ProductManifest from a config dict and optional file paths.
@@ -323,7 +325,14 @@ class ProductManifest:
             fallbacks_used:     List of fallback descriptions.
             metadata:           Extra key-value pairs.
             hash_files:         If True, compute SHA-256 of each file path.
+            provenance:         Optional ProvenanceBlock for strict provenance.
+            benchmark_mode:     Optional BenchmarkMode for strict validation.
         """
+        # Validate with benchmark mode if provided
+        fbs = list(fallbacks_used or [])
+        if benchmark_mode is not None:
+            benchmark_mode.validate_manifest_inputs(timestamp_utc, data_snapshot_id, fbs)
+
         config_hash = _sha256_dict(config)
 
         def _hash_files(files: Optional[Dict[str, str]]) -> Dict[str, str]:
@@ -350,6 +359,7 @@ class ProductManifest:
             data_snapshot_id=data_snapshot_id,
             input_file_hashes=_hash_files(input_files),
             output_file_hashes=_hash_files(output_files),
-            fallbacks_used=list(fallbacks_used or []),
+            fallbacks_used=fbs,
             metadata=dict(metadata or {}),
+            provenance=provenance,
         )

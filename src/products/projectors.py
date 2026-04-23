@@ -216,6 +216,7 @@ def export_dataset(
                 output_file_hashes=output_hashes,
                 fallbacks_used=list(manifest.fallbacks_used),
                 metadata=dict(manifest.metadata),
+                provenance=manifest.provenance,
             )
         else:
             output_manifest = ProductManifest(

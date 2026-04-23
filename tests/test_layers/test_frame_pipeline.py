@@ -76,7 +76,7 @@ class _StubL1:
         sat = components["satellite"]
         return EntryWaveState(
             frame_id=frame.frame_id,
-            grid=frame.grid,
+            native_grid=frame.grid,
             total_loss_db=components["total"],
             fspl_db=components["fspl"],
             atm_db=components["atm"],
@@ -114,7 +114,7 @@ class _StubL2:
         occ = loss_db >= self.MAX_DIFFRACTION_LOSS_DB
         return TerrainState(
             frame_id=frame.frame_id,
-            grid=frame.grid,
+            native_grid=frame.grid,
             loss_db=loss_db,
             occlusion_mask=occ,
         )
@@ -141,7 +141,7 @@ class _StubL3:
         support_mask = np.ones(loss_db.shape, dtype=bool)
         return UrbanRefinementState(
             frame_id=frame.frame_id,
-            grid=frame.grid,
+            native_grid=frame.grid,
             urban_grid=frame.grid,
             urban_residual_db=loss_db,
             support_mask=support_mask,

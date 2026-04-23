@@ -491,7 +491,7 @@ class L2TopoLayer(BaseLayer):
 
         return TerrainState(
             frame_id=frame.frame_id,
-            grid=_grid,
+            native_grid=_grid,
             loss_db=loss_db,
             occlusion_mask=occlusion_mask,
         )

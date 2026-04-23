@@ -21,7 +21,7 @@ N = 256
 def _entry(frame_id=FRAME_ID, total=153.5, el=45.0, az=180.0):
     ones = np.ones((N, N), dtype=np.float32)
     return EntryWaveState(
-        frame_id=frame_id, grid=GRID,
+        frame_id=frame_id, native_grid=GRID,
         total_loss_db=ones * total,
         fspl_db=ones * 180.0, atm_db=ones * 2.0,
         iono_db=ones * 1.0, pol_db=ones * 0.5, gain_db=ones * 30.0,
@@ -34,7 +34,7 @@ def _entry(frame_id=FRAME_ID, total=153.5, el=45.0, az=180.0):
 def _terrain(loss=20.0):
     loss_arr = np.full((N, N), loss, dtype=np.float32)
     return TerrainState(
-        frame_id=FRAME_ID, grid=GRID,
+        frame_id=FRAME_ID, native_grid=GRID,
         loss_db=loss_arr,
         occlusion_mask=np.zeros((N, N), dtype=bool),
     )
@@ -49,7 +49,7 @@ def _urban(residual=15.0, support_fraction=0.5):
     support[:half, :] = True
     nlos = res > 0
     return UrbanRefinementState(
-        frame_id=FRAME_ID, grid=GRID,
+        frame_id=FRAME_ID, native_grid=GRID,
         urban_grid=GRID,
         urban_residual_db=res,
         support_mask=support,
@@ -108,7 +108,7 @@ class TestCompose:
     def test_shape_error_on_mismatched_entry(self):
         bad_grid = GridSpec.from_legacy_args(34.0, 108.0, 256.0, 128, 128)
         bad_entry = EntryWaveState(
-            frame_id=FRAME_ID, grid=bad_grid,
+            frame_id=FRAME_ID, native_grid=bad_grid,
             total_loss_db=np.ones((128, 128), dtype=np.float32),
             fspl_db=np.ones((128, 128), dtype=np.float32),
             atm_db=np.ones((128, 128), dtype=np.float32),
@@ -140,7 +140,7 @@ class TestCompose:
     def test_terrain_frame_id_mismatch_raises(self):
         loss = np.zeros((N, N), dtype=np.float32)
         wrong_terrain = TerrainState(
-            frame_id="wrong_frame", grid=GRID,
+            frame_id="wrong_frame", native_grid=GRID,
             loss_db=loss, occlusion_mask=np.zeros((N, N), dtype=bool),
         )
         with pytest.raises(FrameMismatchError):

@@ -405,7 +405,7 @@ class L3UrbanLayer(BaseLayer):
 
         return UrbanRefinementState(
             frame_id=frame.frame_id,
-            grid=_grid,
+            native_grid=_grid,
             urban_grid=_grid,
             urban_residual_db=loss_db,
             support_mask=support_mask,

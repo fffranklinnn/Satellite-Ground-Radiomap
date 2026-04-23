@@ -41,7 +41,7 @@ def frame():
 def entry(frame):
     ones = np.ones((N, N), dtype=np.float32)
     return EntryWaveState(
-        frame_id=frame.frame_id, grid=GRID,
+        frame_id=frame.frame_id, native_grid=GRID,
         total_loss_db=ones * 153.5,
         fspl_db=ones * 180.0, atm_db=ones * 2.0,
         iono_db=ones * 1.0, pol_db=ones * 0.5, gain_db=ones * 30.0,
@@ -56,7 +56,7 @@ def terrain(frame):
     loss = np.zeros((N, N), dtype=np.float32)
     loss[:64, :64] = 20.0
     occ = loss >= 60.0
-    return TerrainState(frame_id=frame.frame_id, grid=GRID, loss_db=loss, occlusion_mask=occ)
+    return TerrainState(frame_id=frame.frame_id, native_grid=GRID, loss_db=loss, occlusion_mask=occ)
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def urban(frame):
     support[100:150, 100:150] = True
     nlos = res > 0
     return UrbanRefinementState(
-        frame_id=frame.frame_id, grid=GRID, urban_grid=GRID,
+        frame_id=frame.frame_id, native_grid=GRID, urban_grid=GRID,
         urban_residual_db=res, support_mask=support, nlos_mask=nlos,
     )
 

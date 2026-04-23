@@ -102,7 +102,7 @@ def entry_state(frame):
     ones = np.ones((n, n), dtype=np.float32)
     return EntryWaveState(
         frame_id=frame.frame_id,
-        grid=frame.grid,
+        native_grid=frame.grid,
         total_loss_db=ones * 153.5,
         fspl_db=ones * 180.0,
         atm_db=ones * 2.0,

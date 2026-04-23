@@ -46,7 +46,7 @@ GOLDEN_FRAME_LIST = Path("benchmarks/golden_scenes/frame_list.json")
 def _make_entry(frame_id: str, total: float = 153.5) -> EntryWaveState:
     ones = np.ones((N, N), dtype=np.float32)
     return EntryWaveState(
-        frame_id=frame_id, grid=GRID,
+        frame_id=frame_id, native_grid=GRID,
         total_loss_db=ones * total,
         fspl_db=ones * 180.0, atm_db=ones * 2.0,
         iono_db=ones * 1.0, pol_db=ones * 0.5, gain_db=ones * 30.0,
@@ -58,7 +58,7 @@ def _make_entry(frame_id: str, total: float = 153.5) -> EntryWaveState:
 
 def _make_terrain(frame_id: str, loss: float = 2.0) -> TerrainState:
     return TerrainState(
-        frame_id=frame_id, grid=GRID,
+        frame_id=frame_id, native_grid=GRID,
         loss_db=np.full((N, N), loss, dtype=np.float32),
         occlusion_mask=np.zeros((N, N), dtype=bool),
     )
@@ -68,7 +68,7 @@ def _make_urban(frame_id: str, residual: float = 5.0) -> UrbanRefinementState:
     res = np.full((N, N), residual, dtype=np.float32)
     support = np.ones((N, N), dtype=bool)
     return UrbanRefinementState(
-        frame_id=frame_id, grid=GRID, urban_grid=GRID,
+        frame_id=frame_id, native_grid=GRID, urban_grid=GRID,
         urban_residual_db=res,
         nlos_mask=support,
         support_mask=support,

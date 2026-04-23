@@ -895,7 +895,7 @@ class L1MacroLayer(BaseLayer):
         sat = components.get("satellite", {})
         return EntryWaveState(
             frame_id=frame.frame_id,
-            grid=grid,
+            native_grid=grid,
             total_loss_db=components["total"],
             fspl_db=components["fspl"],
             atm_db=components["atm"],

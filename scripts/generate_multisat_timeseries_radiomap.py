@@ -224,20 +224,23 @@ def compute_satellite_maps(
     """
     Compute per-satellite maps using the FrameContext pipeline.
 
-    Replaces the legacy LayerContext.extras geometry injection and
-    direct _interpolate_to_target() calls.
+    Uses SatelliteSelector to pre-bind satellite geometry before frame build,
+    matching the canonical contract in main.py and BenchmarkRunner.
     """
-    # Build a frame for this satellite; L1 will select the satellite internally
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        frame = frame_builder.build(timestamp)
-
-    # L1: propagate_entry selects the best satellite matching norad_id
-    entry = l1_layer.propagate_entry(
-        frame,
-        context=LayerContext(extras={"target_norad_ids": [norad_id]}),
+    from src.planning.satellite_selector import SatelliteSelector
+    tle_cfg = l1_layer.config.get("tle", {})
+    tle_path = (tle_cfg.get("file") if isinstance(tle_cfg, dict) else None) or l1_layer.config.get("tle_file", "")
+    selector = SatelliteSelector(str(tle_path), strict=False, min_elevation_deg=-90.0)
+    sat_info = selector.select(
+        timestamp=timestamp,
+        center=(frame_builder.grid.center_lat, frame_builder.grid.center_lon),
+        target_ids=[str(norad_id)],
+        strict=False,
     )
+    frame = frame_builder.build(timestamp, sat_info=sat_info)
+
+    # L1: propagate_entry uses frame-bound satellite geometry
+    entry = l1_layer.propagate_entry(frame)
     sat = {
         "norad_id": entry.norad_id or norad_id,
         "lat_deg": entry.sat_lat_deg,
@@ -245,7 +248,7 @@ def compute_satellite_maps(
         "alt_m": entry.sat_alt_m,
         "azimuth_deg": float(entry.azimuth_deg[entry.grid.ny // 2, entry.grid.nx // 2]),
         "elevation_deg": float(entry.elevation_deg[entry.grid.ny // 2, entry.grid.nx // 2]),
-        "slant_range_km": float(entry.slant_range_m[entry.grid.ny // 2, entry.grid.nx // 2]) / 1000.0,
+        "slant_range_m": float(entry.slant_range_m[entry.grid.ny // 2, entry.grid.nx // 2]),
     }
 
     # L2: propagate_terrain uses frame.grid.sw_corner() — no manual extras injection
@@ -257,9 +260,10 @@ def compute_satellite_maps(
     l1_map = entry.total_loss_db
     l2_map = terrain.loss_db
     l3_map = urban.urban_residual_db
+    _grid = object.__getattribute__(frame, "grid")
     msm = MultiScaleMap.compose(
         frame_id=frame.frame_id,
-        grid=frame.grid,
+        grid=_grid,
         entry=entry,
         terrain=terrain,
         urban=urban,

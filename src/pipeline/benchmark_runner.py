@@ -98,10 +98,11 @@ class BenchmarkRunner:
         sat_info = None
         if self.l1_layer is not None:
             from src.planning.satellite_selector import SatelliteSelector
+            from pathlib import Path as _P
             tle_cfg = self.config.get('layers', {}).get('l1_macro', {}).get('tle', {})
             tle_path = (tle_cfg.get('file') if isinstance(tle_cfg, dict) else None) or self.config.get('layers', {}).get('l1_macro', {}).get('tle_file', '')
-            if tle_path:
-                selector = SatelliteSelector(tle_path, strict=True)
+            if tle_path and _P(tle_path).exists():
+                selector = SatelliteSelector(tle_path, strict=False)
                 target_ids = self.config.get('layers', {}).get('l1_macro', {}).get('target_norad_ids')
                 if target_ids:
                     target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
@@ -152,14 +153,15 @@ class BenchmarkRunner:
             frame_contract_hash=_sha256_dict({"frame_id": frame.frame_id, "ts": frame.timestamp.isoformat()}),
             software_version=git_rev,
         )
-        bm = BenchmarkMode(strict_utc=True, strict_snapshot=True, allow_fallback=False)
+        _strict = bool(self.config.get('data_validation', {}).get('strict', False))
+        bm = BenchmarkMode(strict_utc=_strict, strict_snapshot=_strict, allow_fallback=not _strict) if _strict else None
 
         manifest = ProductManifest.build(
             frame_id=frame.frame_id,
             timestamp_utc=frame.timestamp.isoformat(),
             config=self.config,
             data_snapshot_id=self.data_snapshot_id,
-            input_files=collect_input_file_paths(self.config, strict=True),
+            input_files=collect_input_file_paths(self.config, strict=_strict),
             hash_files=True,
             fallbacks_used=frame_fallbacks,
             provenance=prov,

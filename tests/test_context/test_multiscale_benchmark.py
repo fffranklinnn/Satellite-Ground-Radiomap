@@ -26,7 +26,7 @@ N = 256
 def _make_entry(total: float) -> EntryWaveState:
     ones = np.ones((N, N), dtype=np.float32)
     return EntryWaveState(
-        frame_id=FRAME_ID, grid=GRID,
+        frame_id=FRAME_ID, native_grid=GRID,
         total_loss_db=ones * total,
         fspl_db=ones * 180.0, atm_db=ones * 2.0,
         iono_db=ones * 1.0, pol_db=ones * 0.5, gain_db=ones * 30.0,
@@ -38,7 +38,7 @@ def _make_entry(total: float) -> EntryWaveState:
 
 def _make_terrain(loss: float) -> TerrainState:
     return TerrainState(
-        frame_id=FRAME_ID, grid=GRID,
+        frame_id=FRAME_ID, native_grid=GRID,
         loss_db=np.full((N, N), loss, dtype=np.float32),
         occlusion_mask=np.zeros((N, N), dtype=bool),
     )
@@ -51,7 +51,7 @@ def _make_urban(residual: float, support_rows: slice) -> UrbanRefinementState:
     res[support_rows, :] = residual
     support[support_rows, :] = True
     return UrbanRefinementState(
-        frame_id=FRAME_ID, grid=GRID, urban_grid=GRID,
+        frame_id=FRAME_ID, native_grid=GRID, urban_grid=GRID,
         urban_residual_db=res, support_mask=support, nlos_mask=res > 0,
     )
 
@@ -105,7 +105,7 @@ class TestSupportMaskGating:
         terrain = _make_terrain(10.0)
         # Urban with all-zero residual and all-False support
         urban = UrbanRefinementState(
-            frame_id=FRAME_ID, grid=GRID, urban_grid=GRID,
+            frame_id=FRAME_ID, native_grid=GRID, urban_grid=GRID,
             urban_residual_db=np.zeros((N, N), dtype=np.float32),
             support_mask=np.zeros((N, N), dtype=bool),
             nlos_mask=np.zeros((N, N), dtype=bool),
@@ -119,7 +119,7 @@ class TestSupportMaskGating:
         terrain = _make_terrain(10.0)
         res = np.full((N, N), 5.0, dtype=np.float32)
         urban = UrbanRefinementState(
-            frame_id=FRAME_ID, grid=GRID, urban_grid=GRID,
+            frame_id=FRAME_ID, native_grid=GRID, urban_grid=GRID,
             urban_residual_db=res,
             support_mask=np.ones((N, N), dtype=bool),
             nlos_mask=res > 0,

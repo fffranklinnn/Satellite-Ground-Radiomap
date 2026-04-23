@@ -27,7 +27,8 @@ from src.layers.base import LayerContext
 def _measure_single_frame(config: dict) -> dict:
     origin_lat = config["origin"]["latitude"]
     origin_lon = config["origin"]["longitude"]
-    frame_dt = datetime.fromisoformat(config["time"]["start"]).replace(tzinfo=timezone.utc)
+    from src.context.time_utils import parse_iso_utc
+    frame_dt = parse_iso_utc(config["time"]["start"], strict=False)
 
     l3_cfg = config["layers"].get("l3_urban", {})
     incident_dir_cfg = l3_cfg.get("incident_dir")
@@ -55,7 +56,7 @@ def _measure_single_frame(config: dict) -> dict:
 def _measure_multi_frame(config: dict, n_frames: int = 4) -> dict:
     origin_lat = config["origin"]["latitude"]
     origin_lon = config["origin"]["longitude"]
-    start_dt = datetime.fromisoformat(config["time"]["start"]).replace(tzinfo=timezone.utc)
+    start_dt = parse_iso_utc(config["time"]["start"], strict=False)
     step = timedelta(hours=config["time"].get("step_hours", 6))
 
     l3_cfg = config["layers"].get("l3_urban", {})

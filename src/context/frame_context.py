@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -32,7 +33,7 @@ class FrameContext:
     Attributes:
         frame_id:       Unique identifier for this frame (e.g. ISO timestamp + norad_id).
         timestamp:      UTC datetime for satellite positioning and atmospheric queries.
-        grid:           Spatial grid for this frame (center-anchored GridSpec).
+        grid:           Spatial grid for this frame (deprecated; use coverage.l1_grid etc.).
         coverage:       Multi-scale coverage specification (optional; required in strict mode).
         norad_id:       NORAD catalog ID of the selected satellite (optional).
         sat_lat_deg:    Satellite sub-satellite latitude (optional).

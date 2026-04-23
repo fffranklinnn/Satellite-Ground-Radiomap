@@ -75,10 +75,8 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 
 def _parse_ts(ts: str) -> datetime:
-    dt = datetime.fromisoformat(ts)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    from src.context.time_utils import parse_iso_utc
+    return parse_iso_utc(ts, strict=False)
 
 
 def _parse_float_list(text: str) -> List[float]:

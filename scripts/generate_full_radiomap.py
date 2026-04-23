@@ -75,12 +75,10 @@ def resolve_path(project_root: Path, value: Optional[str]) -> Optional[Path]:
 
 
 def parse_timestamp(ts_str: Optional[str], config: Dict) -> datetime:
+    from src.context.time_utils import parse_iso_utc
     if ts_str is None:
         ts_str = config.get("time", {}).get("start", "2025-01-01T00:00:00")
-    ts = datetime.fromisoformat(ts_str)
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return ts.astimezone(timezone.utc)
+    return parse_iso_utc(ts_str, strict=False)
 
 
 def check_required_data(project_root: Path,

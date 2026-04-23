@@ -401,7 +401,8 @@ def main():
     parser.add_argument('--output', default='output/dwell')
     args = parser.parse_args()
 
-    ts = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
+    from src.context.time_utils import parse_iso_utc
+    ts = parse_iso_utc(args.start, strict=False)
     config_path = _ROOT / args.config
     output_dir  = _ROOT / args.output / args.norad
 

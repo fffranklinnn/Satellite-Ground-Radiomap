@@ -272,7 +272,8 @@ def check_manifest_fields(
 
     # AC-2: timestamp_utc is UTC-aware ISO string
     try:
-        ts = datetime.fromisoformat(manifest.timestamp_utc)
+        from src.context.time_utils import parse_iso_utc
+        ts = parse_iso_utc(manifest.timestamp_utc, strict=False)
         utc_aware = ts.tzinfo is not None
     except Exception:
         utc_aware = False

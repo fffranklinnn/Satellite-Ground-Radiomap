@@ -466,7 +466,8 @@ def main():
     parser.add_argument('--output', default='output/l1l2')
     args = parser.parse_args()
 
-    ts = datetime.fromisoformat(args.timestamp).replace(tzinfo=timezone.utc)
+    from src.context.time_utils import parse_iso_utc
+    ts = parse_iso_utc(args.timestamp, strict=False)
 
     config_path = _ROOT / args.config
     output_dir  = _ROOT / args.output

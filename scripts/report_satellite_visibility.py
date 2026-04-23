@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.layers import L1MacroLayer
+from src.context.time_utils import parse_iso_utc
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,10 +35,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _parse_iso_utc(text: str) -> datetime:
-    dt = datetime.fromisoformat(text)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    return parse_iso_utc(text, strict=False)
 
 
 def _load_config(path: Path) -> Dict:

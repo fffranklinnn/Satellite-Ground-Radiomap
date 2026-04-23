@@ -7,9 +7,12 @@ No layer may independently interpret a bare origin_lat/origin_lon pair.
 
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import dataclass
-from typing import Tuple
+from dataclasses import dataclass, asdict
+from typing import Dict, Optional, Tuple
+
+VALID_ROLES = {"l1_macro", "l2_terrain", "l3_urban", "product", "legacy"}
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,7 @@ class GridSpec:
     pixel_registration: str
     row_order: str
     col_order: str
+    role: str = "legacy"
 
     def __post_init__(self) -> None:
         if self.anchor != "center":
@@ -48,6 +52,10 @@ class GridSpec:
         if self.pixel_registration != "center":
             raise ValueError(
                 f"GridSpec only supports pixel_registration='center', got '{self.pixel_registration}'."
+            )
+        if self.role not in VALID_ROLES:
+            raise ValueError(
+                f"GridSpec.role must be one of {VALID_ROLES}, got '{self.role}'."
             )
 
     # ------------------------------------------------------------------
@@ -63,6 +71,7 @@ class GridSpec:
         nx: int,
         ny: int,
         crs: str = "WGS84",
+        role: str = "legacy",
     ) -> "GridSpec":
         """
         Build a GridSpec from the legacy center-origin calling convention.
@@ -87,6 +96,7 @@ class GridSpec:
             pixel_registration="center",
             row_order="north_to_south",
             col_order="west_to_east",
+            role=role,
         )
 
     @classmethod
@@ -98,6 +108,7 @@ class GridSpec:
         nx: int,
         ny: int,
         crs: str = "WGS84",
+        role: str = "legacy",
     ) -> "GridSpec":
         """
         Build a GridSpec from a south-west corner origin (L2 legacy convention).
@@ -109,7 +120,7 @@ class GridSpec:
         lon_per_km = 1.0 / (111.0 * math.cos(math.radians(sw_lat + half_km * lat_per_km)))
         center_lat = sw_lat + half_km * lat_per_km
         center_lon = sw_lon + half_km * lon_per_km
-        return cls.from_legacy_args(center_lat, center_lon, coverage_km, nx, ny, crs)
+        return cls.from_legacy_args(center_lat, center_lon, coverage_km, nx, ny, crs, role)
 
     # ------------------------------------------------------------------
     # Derived geometry
@@ -165,6 +176,46 @@ class GridSpec:
         lat = self.center_lat + dy_m * lat_per_m
         lon = self.center_lon + dx_m * lon_per_m
         return (lat, lon)
+
+    def contains_bbox(self, other: "GridSpec", tol_m: float = 1.0) -> bool:
+        """Return True if this grid's bbox fully contains other's bbox (within tolerance)."""
+        s1, w1, n1, e1 = self.bbox()
+        s2, w2, n2, e2 = other.bbox()
+        lat_tol = tol_m / 111_000.0
+        lon_tol = tol_m / (111_000.0 * math.cos(math.radians(self.center_lat)))
+        return (s2 >= s1 - lat_tol and n2 <= n1 + lat_tol and
+                w2 >= w1 - lon_tol and e2 <= e1 + lon_tol)
+
+    def same_center(self, other: "GridSpec", tol_m: float = 1.0) -> bool:
+        """Return True if this grid shares the same center as other (within tolerance)."""
+        lat_tol = tol_m / 111_000.0
+        lon_tol = tol_m / (111_000.0 * math.cos(math.radians(self.center_lat)))
+        return (abs(self.center_lat - other.center_lat) <= lat_tol and
+                abs(self.center_lon - other.center_lon) <= lon_tol)
+
+    def to_dict(self) -> Dict:
+        """Serialize to a JSON-compatible dict."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "GridSpec":
+        """Deserialize from a dict (inverse of to_dict)."""
+        return cls(**d)
+
+    def to_json(self) -> str:
+        """Serialize to a JSON string."""
+        return json.dumps(self.to_dict(), sort_keys=True)
+
+    @classmethod
+    def from_json(cls, s: str) -> "GridSpec":
+        """Deserialize from a JSON string."""
+        return cls.from_dict(json.loads(s))
+
+    def with_role(self, role: str) -> "GridSpec":
+        """Return a copy of this GridSpec with a different role."""
+        d = asdict(self)
+        d["role"] = role
+        return GridSpec(**d)
 
     def __repr__(self) -> str:
         return (

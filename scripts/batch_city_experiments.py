@@ -93,10 +93,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def _parse_iso_utc(s: str) -> datetime:
-    dt = datetime.fromisoformat(s)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    from src.context.time_utils import parse_iso_utc
+    return parse_iso_utc(s, strict=False)
 
 
 def _parse_float_list(text: str) -> List[float]:

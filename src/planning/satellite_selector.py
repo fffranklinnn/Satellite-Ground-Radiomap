@@ -140,12 +140,36 @@ class SatelliteSelector:
                     f"NORAD IDs not found in TLE catalog: {sorted(unknown)}"
                 )
 
-        # Build Skyfield time
+        candidates = self._collect_candidates(ts_utc, center_lat, center_lon, min_el, filter_ids)
+
+        if not candidates:
+            if use_strict:
+                raise NoVisibleSatelliteError(
+                    f"No satellite meets visibility criteria "
+                    f"(min_elevation={min_el}deg) at {ts_utc.isoformat()} "
+                    f"over ({center_lat}, {center_lon})."
+                )
+            return None
+
+        # Deterministic sort: highest elevation first, then lowest NORAD ID
+        candidates.sort(key=lambda c: (-c["elevation_deg"], int(c["norad_id"])))
+        return candidates[0]
+
+    def _collect_candidates(
+        self,
+        ts_utc,
+        center_lat: float,
+        center_lon: float,
+        min_el: float,
+        filter_ids: Optional[List[str]],
+    ) -> List[Dict[str, Any]]:
+        """Collect visible satellite candidates. Extracted for testability."""
+        from skyfield.api import wgs84, load
+
         ts = load.timescale()
         t = ts.from_datetime(ts_utc)
         observer = wgs84.latlon(center_lat, center_lon)
 
-        # Collect candidates
         candidates: List[Dict[str, Any]] = []
         for sat, tg in zip(self.satellites, self.tle_groups):
             norad_id = _get_norad_id(tg)
@@ -183,15 +207,4 @@ class SatelliteSelector:
             except Exception:
                 continue
 
-        if not candidates:
-            if use_strict:
-                raise NoVisibleSatelliteError(
-                    f"No satellite meets visibility criteria "
-                    f"(min_elevation={min_el}deg) at {ts_utc.isoformat()} "
-                    f"over ({center_lat}, {center_lon})."
-                )
-            return None
-
-        # Deterministic sort: highest elevation first, then lowest NORAD ID
-        candidates.sort(key=lambda c: (-c["elevation_deg"], int(c["norad_id"])))
-        return candidates[0]
+        return candidates

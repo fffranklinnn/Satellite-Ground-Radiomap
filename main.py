@@ -202,14 +202,17 @@ def run_simulation(config: dict, output_dir: Path):
         # Collect fallbacks recorded during this frame's propagation
         frame_fallbacks = l1_layer.fallbacks_used if l1_layer is not None else []
 
-        # Assemble composite map via MultiScaleMap.compose() (masked residual compositor)
+        # Assemble composite map via projected composition (canonical path)
         _grid = object.__getattribute__(frame, "grid")
-        msm = MultiScaleMap.compose(
+        from src.compose import project_to_product_grid
+        projected = project_to_product_grid(
+            product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
             frame_id=frame.frame_id,
-            grid=_grid,
-            entry=entry,
-            terrain=terrain,
-            urban=urban,
+        )
+        msm = MultiScaleMap.compose_projected(
+            frame_id=frame.frame_id,
+            product_grid=_grid,
+            **projected,
         )
         composite_map = msm.composite_db
         contributions = {}

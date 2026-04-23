@@ -132,12 +132,15 @@ class BenchmarkRunner:
         frame_fallbacks = list(self.l1_layer.fallbacks_used) if self.l1_layer is not None else []
 
         _grid = object.__getattribute__(frame, "grid")
-        msm = MultiScaleMap.compose(
+        from src.compose import project_to_product_grid
+        projected = project_to_product_grid(
+            product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
             frame_id=frame.frame_id,
-            grid=_grid,
-            entry=entry,
-            terrain=terrain,
-            urban=urban,
+        )
+        msm = MultiScaleMap.compose_projected(
+            frame_id=frame.frame_id,
+            product_grid=_grid,
+            **projected,
         )
 
         from src.products.manifest import ProvenanceBlock, BenchmarkMode, MANIFEST_SCHEMA_VERSION, _sha256_dict

@@ -220,9 +220,12 @@ def compute_satellite_maps(
     frame_builder: FrameBuilder,
     timestamp: datetime,
     norad_id: str,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any], "FrameContext"]:
     """
     Compute per-satellite maps using the FrameContext pipeline.
+
+    Returns (l1_map, l2_map, l3_map, total_map, sat_info, frame).
+    The frame is pre-bound with satellite geometry and can be reused for export.
 
     Uses SatelliteSelector to pre-bind satellite geometry before frame build,
     matching the canonical contract in main.py and BenchmarkRunner.
@@ -261,15 +264,18 @@ def compute_satellite_maps(
     l2_map = terrain.loss_db
     l3_map = urban.urban_residual_db
     _grid = object.__getattribute__(frame, "grid")
-    msm = MultiScaleMap.compose(
+    from src.compose import project_to_product_grid
+    projected = project_to_product_grid(
+        product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
         frame_id=frame.frame_id,
-        grid=_grid,
-        entry=entry,
-        terrain=terrain,
-        urban=urban,
+    )
+    msm = MultiScaleMap.compose_projected(
+        frame_id=frame.frame_id,
+        product_grid=_grid,
+        **projected,
     )
     total_map = msm.composite_db
-    return l1_map, l2_map, l3_map, total_map, sat
+    return l1_map, l2_map, l3_map, total_map, sat, frame
 
 
 def satellite_metadata(sat_info: Dict[str, Any],
@@ -280,7 +286,7 @@ def satellite_metadata(sat_info: Dict[str, Any],
         "norad_id": str(sat_info.get("norad_id", "")),
         "azimuth_deg": float(sat_info.get("azimuth_deg", float("nan"))),
         "elevation_deg": float(sat_info.get("elevation_deg", float("nan"))),
-        "slant_range_km": float(sat_info.get("slant_range_km", float("nan"))),
+        "slant_range_km": float(sat_info.get("slant_range_m", float("nan"))) / 1000.0,
         "lat_deg": float(sat_info.get("lat_deg", float("nan"))),
         "lon_deg": float(sat_info.get("lon_deg", float("nan"))),
         "alt_km": float(sat_info.get("alt_m", 0.0) / 1000.0),
@@ -429,6 +435,7 @@ def main() -> None:
                 )
 
                 sat_entries: List[Dict[str, Any]] = []
+                sat_frames: List[Any] = []  # store pre-bound FrameContext per satellite
                 sat_errors: List[Dict[str, Any]] = []
                 status = "ok"
                 l1_layer.clear_fallbacks()
@@ -469,7 +476,7 @@ def main() -> None:
                             continue
 
                         try:
-                            l1_map, l2_map, l3_map, total_map, sat_info = compute_satellite_maps(
+                            l1_map, l2_map, l3_map, total_map, sat_info, sat_frame = compute_satellite_maps(
                                 l1_layer=l1_layer,
                                 l2_layer=l2_layer,
                                 l3_layer=l3_layer,
@@ -481,6 +488,7 @@ def main() -> None:
                             sat_meta["compute_sec"] = round(time.time() - sat_t0, 3)
                             sat_meta["sat_total_mean_db"] = float(np.nanmean(total_map))
                             sat_entries.append(sat_meta)
+                            sat_frames.append(sat_frame)
 
                             if args.fusion_mode == "best-server":
                                 sat_idx = len(sat_entries) - 1
@@ -560,21 +568,8 @@ def main() -> None:
                     hash_files=True,
                     fallbacks_used=l1_layer.fallbacks_used,
                 )
-                # Build export frame with best satellite's geometry
-                best_sat = sat_entries[0] if sat_entries else {}
-                export_sat_info = {
-                    "norad_id": best_sat.get("norad_id"),
-                    "lat_deg": best_sat.get("lat_deg"),
-                    "lon_deg": best_sat.get("lon_deg"),
-                    "alt_m": best_sat.get("alt_m"),
-                    "elevation_deg": best_sat.get("elevation_deg"),
-                    "azimuth_deg": best_sat.get("azimuth_deg"),
-                    "slant_range_m": best_sat.get("slant_range_m"),
-                } if best_sat else None
-                import warnings as _w
-                with _w.catch_warnings():
-                    _w.simplefilter("ignore", DeprecationWarning)
-                    export_frame = frame_builder.build(ts, sat_info=export_sat_info, frame_id=base)
+                # Reuse the first satellite's pre-bound frame for export
+                export_frame = sat_frames[0] if sat_frames else frame_builder.build(ts, frame_id=base)
                 written, _ = export_dataset(
                     output_dir=out_dirs["npy"],
                     frame=export_frame,

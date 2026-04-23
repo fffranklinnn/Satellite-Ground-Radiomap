@@ -84,13 +84,17 @@ def project(
     if product_type == "path_loss_map":
         if multiscale is not None:
             return multiscale.composite_db.astype(np.float32, copy=False)
-        # Fallback: assemble from states
-        msm = MultiScaleMap.compose(
+        # Fallback: project and compose from states
+        from src.compose import project_to_product_grid
+        _grid = object.__getattribute__(frame, "grid")
+        projected = project_to_product_grid(
+            product_grid=_grid, entry=entry, terrain=terrain, urban=urban,
             frame_id=frame.frame_id,
-            grid=frame.grid,
-            entry=entry,
-            terrain=terrain,
-            urban=urban,
+        )
+        msm = MultiScaleMap.compose_projected(
+            frame_id=frame.frame_id,
+            product_grid=_grid,
+            **projected,
         )
         return msm.composite_db
 

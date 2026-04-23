@@ -170,25 +170,22 @@ def run_simulation(config: dict, output_dir: Path):
         # Select satellite before building frame (canonical path)
         sat_info = None
         if l1_layer is not None:
-            try:
-                from src.planning.satellite_selector import SatelliteSelector
-                tle_path = config['layers'].get('l1_macro', {}).get('tle', {})
-                if isinstance(tle_path, dict):
-                    tle_path = tle_path.get('file', '')
-                tle_path = tle_path or config['layers'].get('l1_macro', {}).get('tle_file', '')
-                if tle_path:
-                    selector = SatelliteSelector(tle_path, strict=strict, min_elevation_deg=5.0)
-                    target_ids = config['layers'].get('l1_macro', {}).get('target_norad_ids')
-                    if target_ids:
-                        target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
-                    sat_info = selector.select(
-                        timestamp=current_time,
-                        center=(config['origin']['latitude'], config['origin']['longitude']),
-                        target_ids=target_ids,
-                        strict=strict,
-                    )
-            except Exception as e:
-                logger.warning(f"SatelliteSelector failed: {e}. Falling back to L1 internal selection.")
+            from src.planning.satellite_selector import SatelliteSelector
+            tle_path = config['layers'].get('l1_macro', {}).get('tle', {})
+            if isinstance(tle_path, dict):
+                tle_path = tle_path.get('file', '')
+            tle_path = tle_path or config['layers'].get('l1_macro', {}).get('tle_file', '')
+            if tle_path:
+                selector = SatelliteSelector(tle_path, strict=strict, min_elevation_deg=5.0)
+                target_ids = config['layers'].get('l1_macro', {}).get('target_norad_ids')
+                if target_ids:
+                    target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
+                sat_info = selector.select(
+                    timestamp=current_time,
+                    center=(config['origin']['latitude'], config['origin']['longitude']),
+                    target_ids=target_ids,
+                    strict=strict,
+                )
 
         # Build frame with pre-bound satellite geometry
         frame = frame_builder.build(current_time, sat_info=sat_info)
@@ -206,9 +203,10 @@ def run_simulation(config: dict, output_dir: Path):
         frame_fallbacks = l1_layer.fallbacks_used if l1_layer is not None else []
 
         # Assemble composite map via MultiScaleMap.compose() (masked residual compositor)
+        _grid = object.__getattribute__(frame, "grid")
         msm = MultiScaleMap.compose(
             frame_id=frame.frame_id,
-            grid=frame.grid,
+            grid=_grid,
             entry=entry,
             terrain=terrain,
             urban=urban,
@@ -256,14 +254,30 @@ def run_simulation(config: dict, output_dir: Path):
                            title=f"Composite Radio Map - {current_time.isoformat()}",
                            output_file=str(output_dir / f"composite_{frame_count:04d}.png"),
                            dpi=config['output']['dpi'])
+            from src.products.manifest import ProvenanceBlock, BenchmarkMode, MANIFEST_SCHEMA_VERSION, _sha256_dict
+            import subprocess as _sp
+            try:
+                _git_rev = _sp.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, stderr=_sp.DEVNULL).strip()
+            except Exception:
+                _git_rev = "unknown"
+            _prov = ProvenanceBlock(
+                schema_version=MANIFEST_SCHEMA_VERSION,
+                input_snapshot_hash=_sha256_dict({"snapshot": data_snapshot_id}),
+                coverage_signature=_sha256_dict({"config_hash": _sha256_dict(config)}),
+                frame_contract_hash=_sha256_dict({"frame_id": frame.frame_id, "ts": frame.timestamp.isoformat()}),
+                software_version=_git_rev,
+            )
+            _bm = BenchmarkMode(strict_utc=True, strict_snapshot=True, allow_fallback=False) if strict else None
             frame_manifest = ProductManifest.build(
                 frame_id=frame.frame_id,
                 timestamp_utc=frame.timestamp.isoformat(),
                 config=config,
                 data_snapshot_id=data_snapshot_id,
-                input_files=input_file_paths,
+                input_files=collect_input_file_paths(config, strict=strict),
                 hash_files=True,
                 fallbacks_used=frame_fallbacks,
+                provenance=_prov,
+                benchmark_mode=_bm,
             )
             written, _ = export_dataset(
                 output_dir=output_dir,

@@ -138,6 +138,7 @@ def export_dataset(
     manifest: Optional[ProductManifest] = None,
     prefix: str = "",
     manifest_writer: Optional["ManifestWriter"] = None,
+    require_manifest: bool = True,
 ) -> tuple:
     """
     Export a set of product arrays to NPY files with a JSON sidecar.
@@ -178,12 +179,35 @@ def export_dataset(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    if require_manifest and manifest is None:
+        raise ValueError(
+            "export_dataset() requires a manifest on the canonical path. "
+            "Pass require_manifest=False for legacy export without provenance."
+        )
+
     written: Dict[str, str] = {}
     sidecar: Dict[str, Any] = {
         "frame_id": frame.frame_id,
         "timestamp_utc": frame.timestamp.isoformat(),
         "products": {},
     }
+    # Add traceability fields to sidecar when manifest is available
+    if manifest is not None:
+        sidecar["config_hash"] = manifest.config_hash
+        sidecar["data_snapshot_id"] = manifest.data_snapshot_id
+        sidecar["fallbacks_used"] = list(manifest.fallbacks_used)
+        if manifest.provenance is not None:
+            sidecar["provenance"] = manifest.provenance.to_dict()
+        if frame.norad_id is not None:
+            sidecar["satellite_geometry"] = {
+                "norad_id": frame.norad_id,
+                "elevation_deg": frame.sat_elevation_deg,
+                "azimuth_deg": frame.sat_azimuth_deg,
+                "slant_range_m": frame.sat_slant_range_m,
+                "lat_deg": frame.sat_lat_deg,
+                "lon_deg": frame.sat_lon_deg,
+                "alt_m": frame.sat_alt_m,
+            }
 
     for pt in product_types:
         arr = project(

@@ -481,12 +481,13 @@ class L2TopoLayer(BaseLayer):
             **kwargs,
         )
 
-        # Use geometric occlusion from L2 computation (not loss threshold)
+        # Use geometric occlusion from L2 computation (canonical path).
+        # If compute() returned early (no DEM), geometric cache is None,
+        # meaning no terrain occlusion — use all-False mask.
         if hasattr(self, '_last_geometric_occlusion') and self._last_geometric_occlusion is not None:
             occlusion_mask = self._last_geometric_occlusion
         else:
-            # Fallback for legacy callers that bypass compute()
-            occlusion_mask = loss_db >= self.MAX_DIFFRACTION_LOSS_DB
+            occlusion_mask = np.zeros(loss_db.shape, dtype=bool)
 
         return TerrainState(
             frame_id=frame.frame_id,

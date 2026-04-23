@@ -174,6 +174,7 @@ class TestExportDataset:
             tmp_path, frame,
             product_types=["path_loss_map", "visibility_mask"],
             entry=entry, terrain=terrain, urban=urban,
+            require_manifest=False,
         )
         assert "path_loss_map" in written
         assert "visibility_mask" in written
@@ -181,12 +182,12 @@ class TestExportDataset:
         assert Path(written["visibility_mask"]).exists()
 
     def test_npy_files_loadable(self, tmp_path, frame, entry):
-        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry)
+        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry, require_manifest=False)
         arr = np.load(tmp_path / "elevation_field.npy")
         assert arr.shape == (N, N)
 
     def test_writes_json_sidecar(self, tmp_path, frame, entry):
-        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry)
+        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry, require_manifest=False)
         sidecar_path = tmp_path / "dataset.json"
         assert sidecar_path.exists()
         data = json.loads(sidecar_path.read_text())
@@ -194,7 +195,7 @@ class TestExportDataset:
         assert "elevation_field" in data["products"]
 
     def test_sidecar_contains_shape_and_dtype(self, tmp_path, frame, entry):
-        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry)
+        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry, require_manifest=False)
         data = json.loads((tmp_path / "dataset.json").read_text())
         prod = data["products"]["elevation_field"]
         assert prod["shape"] == [N, N]
@@ -207,18 +208,18 @@ class TestExportDataset:
         assert data["manifest"]["frame_id"] == manifest.frame_id
 
     def test_prefix_applied_to_filenames(self, tmp_path, frame, entry):
-        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry, prefix="run01_")
+        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry, prefix="run01_", require_manifest=False)
         assert (tmp_path / "run01_elevation_field.npy").exists()
         assert (tmp_path / "run01_dataset.json").exists()
 
     def test_creates_output_dir(self, tmp_path, frame, entry):
         nested = tmp_path / "deep" / "nested"
-        export_dataset(nested, frame, ["elevation_field"], entry=entry)
+        export_dataset(nested, frame, ["elevation_field"], entry=entry, require_manifest=False)
         assert nested.exists()
 
     def test_unknown_product_type_raises(self, tmp_path, frame):
         with pytest.raises(UnknownProductTypeError):
-            export_dataset(tmp_path, frame, ["bad_product"])
+            export_dataset(tmp_path, frame, ["bad_product"], require_manifest=False)
 
     def test_all_product_types(self, tmp_path, frame, entry, terrain, urban, multiscale):
         all_types = [
@@ -228,7 +229,30 @@ class TestExportDataset:
         written, _ = export_dataset(
             tmp_path, frame, all_types,
             entry=entry, terrain=terrain, urban=urban, multiscale=multiscale,
+            require_manifest=False,
         )
         assert len(written) == len(all_types)
         for pt in all_types:
             assert Path(written[pt]).exists()
+
+    def test_export_without_manifest_raises(self, tmp_path, frame, entry):
+        """AC-5 negative: canonical export without manifest raises."""
+        with pytest.raises(ValueError, match="requires a manifest"):
+            export_dataset(tmp_path, frame, ["elevation_field"], entry=entry)
+
+    def test_export_with_manifest_preserves_provenance(self, tmp_path, frame, entry, manifest):
+        """AC-5: provenance preserved through export."""
+        from src.products.manifest import ProvenanceBlock
+        prov = ProvenanceBlock(benchmark_id="b1", software_version="v1")
+        from dataclasses import replace
+        # Can't replace frozen, so build a new manifest with provenance
+        m = ProductManifest(
+            frame_id=manifest.frame_id,
+            timestamp_utc=manifest.timestamp_utc,
+            config_hash=manifest.config_hash,
+            data_snapshot_id=manifest.data_snapshot_id,
+            provenance=prov,
+        )
+        export_dataset(tmp_path, frame, ["elevation_field"], entry=entry, manifest=m)
+        data = json.loads((tmp_path / "dataset.json").read_text())
+        assert "provenance" in data

@@ -94,26 +94,23 @@ class BenchmarkRunner:
         Returns:
             ProductManifest with output file hashes.
         """
-        # Select satellite before building frame (canonical path)
+        # Select satellite before building frame (canonical path — no fallback)
         sat_info = None
         if self.l1_layer is not None:
-            try:
-                from src.planning.satellite_selector import SatelliteSelector
-                tle_cfg = self.config.get('layers', {}).get('l1_macro', {}).get('tle', {})
-                tle_path = (tle_cfg.get('file') if isinstance(tle_cfg, dict) else None) or self.config.get('layers', {}).get('l1_macro', {}).get('tle_file', '')
-                if tle_path:
-                    selector = SatelliteSelector(tle_path, strict=True)
-                    target_ids = self.config.get('layers', {}).get('l1_macro', {}).get('target_norad_ids')
-                    if target_ids:
-                        target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
-                    origin = self.config.get('origin', {})
-                    sat_info = selector.select(
-                        timestamp=timestamp,
-                        center=(origin.get('latitude', 0), origin.get('longitude', 0)),
-                        target_ids=target_ids,
-                    )
-            except Exception:
-                pass  # Fall back to L1 internal selection
+            from src.planning.satellite_selector import SatelliteSelector
+            tle_cfg = self.config.get('layers', {}).get('l1_macro', {}).get('tle', {})
+            tle_path = (tle_cfg.get('file') if isinstance(tle_cfg, dict) else None) or self.config.get('layers', {}).get('l1_macro', {}).get('tle_file', '')
+            if tle_path:
+                selector = SatelliteSelector(tle_path, strict=True)
+                target_ids = self.config.get('layers', {}).get('l1_macro', {}).get('target_norad_ids')
+                if target_ids:
+                    target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
+                origin = self.config.get('origin', {})
+                sat_info = selector.select(
+                    timestamp=timestamp,
+                    center=(origin.get('latitude', 0), origin.get('longitude', 0)),
+                    target_ids=target_ids,
+                )
 
         frame = self.frame_builder.build(timestamp, sat_info=sat_info)
 
@@ -131,22 +128,42 @@ class BenchmarkRunner:
 
         frame_fallbacks = list(self.l1_layer.fallbacks_used) if self.l1_layer is not None else []
 
+        _grid = object.__getattribute__(frame, "grid")
         msm = MultiScaleMap.compose(
             frame_id=frame.frame_id,
-            grid=frame.grid,
+            grid=_grid,
             entry=entry,
             terrain=terrain,
             urban=urban,
         )
+
+        from src.products.manifest import ProvenanceBlock, BenchmarkMode, MANIFEST_SCHEMA_VERSION, _sha256_dict
+        import subprocess
+        try:
+            git_rev = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
+        except Exception:
+            git_rev = "unknown"
+
+        prov = ProvenanceBlock(
+            schema_version=MANIFEST_SCHEMA_VERSION,
+            benchmark_id=self.data_snapshot_id,
+            input_snapshot_hash=_sha256_dict({"snapshot": self.data_snapshot_id}),
+            coverage_signature=_sha256_dict({"config_hash": _sha256_dict(self.config)}),
+            frame_contract_hash=_sha256_dict({"frame_id": frame.frame_id, "ts": frame.timestamp.isoformat()}),
+            software_version=git_rev,
+        )
+        bm = BenchmarkMode(strict_utc=True, strict_snapshot=True, allow_fallback=False)
 
         manifest = ProductManifest.build(
             frame_id=frame.frame_id,
             timestamp_utc=frame.timestamp.isoformat(),
             config=self.config,
             data_snapshot_id=self.data_snapshot_id,
-            input_files=collect_input_file_paths(self.config),
+            input_files=collect_input_file_paths(self.config, strict=True),
             hash_files=True,
             fallbacks_used=frame_fallbacks,
+            provenance=prov,
+            benchmark_mode=bm,
         )
 
         _, output_manifest = export_dataset(

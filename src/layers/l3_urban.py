@@ -391,23 +391,17 @@ class L3UrbanLayer(BaseLayer):
         )
 
         nlos_mask = loss_db > 0
-        # support_mask: True where tile data actually provides building coverage.
-        # Derived from non-zero loss OR non-zero building height in the loaded tile.
-        # This replaces the previous unconditional all-ones mask.
-        support_mask = (loss_db != 0) | nlos_mask
-        # If the tile was loaded but has no buildings at all, support is still valid
-        # for the tile footprint — but we can only know this from the loss computation.
-        # A pixel with loss_db == 0 and nlos_mask == False means "tile loaded, LOS confirmed"
-        # which IS valid support. So we need to check if compute() actually ran.
-        # Since compute() always runs if we get here, the tile was loaded.
-        # The correct support_mask is: True everywhere the tile was loaded.
-        # But we need to distinguish "tile loaded with data" from "tile loaded but empty".
-        # For now, mark support as True where building height > 0 OR loss > 0.
-        # This is more conservative than all-ones but still covers the tile footprint.
+        # support_mask: True where tile data was loaded (tile availability).
+        # If compute() ran successfully, the tile was loaded — the entire
+        # tile footprint is supported, even if buildings are absent (empty tile).
+        # This represents "urban refinement data is available here" not
+        # "buildings exist here".
         if hasattr(self, '_last_tile_height') and self._last_tile_height is not None:
-            support_mask = self._last_tile_height > 0
+            # Tile was loaded — entire footprint is supported
+            support_mask = np.ones(loss_db.shape, dtype=bool)
         else:
-            support_mask = loss_db != 0
+            # No tile loaded — no support
+            support_mask = np.zeros(loss_db.shape, dtype=bool)
 
         return UrbanRefinementState(
             frame_id=frame.frame_id,

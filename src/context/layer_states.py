@@ -2,7 +2,7 @@
 Typed per-layer state objects for the SG-MRM pipeline.
 
 Each propagation step returns a typed, immutable state object that carries
-the frame_id, grid, and all computed arrays. Downstream steps validate
+the frame_id, native_grid, and all computed arrays. Downstream steps validate
 frame_id consistency before consuming state.
 
 State hierarchy:
@@ -13,6 +13,7 @@ State hierarchy:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Optional
 
@@ -37,24 +38,29 @@ class EntryWaveState:
     grid: GridSpec
 
     # Component maps (dB)
-    total_loss_db: np.ndarray       # net loss = fspl + atm + iono + pol - gain
-    fspl_db: np.ndarray             # free-space path loss
-    atm_db: np.ndarray              # atmospheric loss
-    iono_db: np.ndarray             # ionospheric loss
-    pol_db: np.ndarray              # polarization loss
-    gain_db: np.ndarray             # antenna gain (positive = gain)
+    total_loss_db: np.ndarray
+    fspl_db: np.ndarray
+    atm_db: np.ndarray
+    iono_db: np.ndarray
+    pol_db: np.ndarray
+    gain_db: np.ndarray
 
     # Geometry maps
-    elevation_deg: np.ndarray       # per-pixel elevation angle to satellite
-    azimuth_deg: np.ndarray         # per-pixel azimuth angle to satellite
-    slant_range_m: np.ndarray       # per-pixel slant range in metres
-    occlusion_mask: np.ndarray      # True where satellite is below horizon
+    elevation_deg: np.ndarray
+    azimuth_deg: np.ndarray
+    slant_range_m: np.ndarray
+    occlusion_mask: np.ndarray
 
     # Satellite metadata
     norad_id: Optional[str] = None
     sat_lat_deg: Optional[float] = None
     sat_lon_deg: Optional[float] = None
     sat_alt_m: Optional[float] = None
+
+    @property
+    def native_grid(self) -> GridSpec:
+        """Canonical accessor for the L1 native grid."""
+        return self.grid
 
     def __post_init__(self) -> None:
         if not isinstance(self.grid, GridSpec):
@@ -82,9 +88,14 @@ class TerrainState:
     frame_id: str
     grid: GridSpec
 
-    loss_db: np.ndarray             # terrain diffraction/occlusion loss (dB)
-    occlusion_mask: np.ndarray      # True where terrain blocks LOS
-    dem_grid: Optional[np.ndarray] = None  # raw DEM elevation (m), may be None
+    loss_db: np.ndarray
+    occlusion_mask: np.ndarray
+    dem_grid: Optional[np.ndarray] = None
+
+    @property
+    def native_grid(self) -> GridSpec:
+        """Canonical accessor for the L2 native grid."""
+        return self.grid
 
     def __post_init__(self) -> None:
         if not isinstance(self.grid, GridSpec):
@@ -109,12 +120,17 @@ class UrbanRefinementState:
     """
 
     frame_id: str
-    grid: GridSpec                  # L3 tile grid (256 m coverage)
-    urban_grid: GridSpec            # same as grid; kept for explicit typing
+    grid: GridSpec
+    urban_grid: GridSpec
 
-    urban_residual_db: np.ndarray   # NLoS residual loss (dB), zero outside support
-    support_mask: np.ndarray        # True where urban tile data is available
-    nlos_mask: np.ndarray           # True where NLoS condition holds
+    urban_residual_db: np.ndarray
+    support_mask: np.ndarray
+    nlos_mask: np.ndarray
+
+    @property
+    def native_grid(self) -> GridSpec:
+        """Canonical accessor for the L3 native grid."""
+        return self.grid
 
     def __post_init__(self) -> None:
         if not isinstance(self.grid, GridSpec):

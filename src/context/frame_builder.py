@@ -55,9 +55,10 @@ class FrameBuilder:
 
         Args:
             timestamp:  UTC datetime for this frame.
-            sat_info:   Satellite geometry dict (from L1._select_best_satellite).
+            sat_info:   Satellite geometry dict (from SatelliteSelector.select).
                         Expected keys: norad_id, lat_deg, lon_deg, alt_m,
-                        elevation_deg, azimuth_deg, slant_range_m (optional).
+                        elevation_deg, azimuth_deg, slant_range_m.
+                        Required on canonical strict path.
             frame_id:   Override the auto-generated frame ID.
             strict:     Override the builder's strict setting for this frame.
 
@@ -66,6 +67,20 @@ class FrameBuilder:
         """
         use_strict = self.strict if strict is None else strict
         ts = require_utc(timestamp, strict=use_strict)
+
+        if use_strict and sat_info is None:
+            raise ValueError(
+                "FrameBuilder.build() requires sat_info on the canonical strict path. "
+                "Use SatelliteSelector.select() to obtain satellite geometry before "
+                "building the frame."
+            )
+        if not use_strict and sat_info is None:
+            warnings.warn(
+                "Building a frame without sat_info is deprecated. "
+                "Use SatelliteSelector.select() to pre-bind satellite geometry.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         norad_id = None
         sat_lat = sat_lon = sat_alt = sat_el = sat_az = sat_slant = None

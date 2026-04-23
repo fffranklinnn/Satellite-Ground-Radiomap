@@ -94,7 +94,8 @@ class BenchmarkRunner:
         Returns:
             ProductManifest with output file hashes.
         """
-        # Select satellite before building frame (canonical path — no fallback)
+        # Select satellite before building frame (canonical path)
+        _strict = bool(self.config.get('data_validation', {}).get('strict', False))
         sat_info = None
         if self.l1_layer is not None:
             from src.planning.satellite_selector import SatelliteSelector
@@ -102,7 +103,7 @@ class BenchmarkRunner:
             tle_cfg = self.config.get('layers', {}).get('l1_macro', {}).get('tle', {})
             tle_path = (tle_cfg.get('file') if isinstance(tle_cfg, dict) else None) or self.config.get('layers', {}).get('l1_macro', {}).get('tle_file', '')
             if tle_path and _P(tle_path).exists():
-                selector = SatelliteSelector(tle_path, strict=False)
+                selector = SatelliteSelector(tle_path, strict=_strict)
                 target_ids = self.config.get('layers', {}).get('l1_macro', {}).get('target_norad_ids')
                 if target_ids:
                     target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
@@ -111,6 +112,7 @@ class BenchmarkRunner:
                     timestamp=timestamp,
                     center=(origin.get('latitude', 0), origin.get('longitude', 0)),
                     target_ids=target_ids,
+                    strict=_strict,
                 )
 
         frame = self.frame_builder.build(timestamp, sat_info=sat_info)

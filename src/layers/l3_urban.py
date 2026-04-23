@@ -375,7 +375,7 @@ class L3UrbanLayer(BaseLayer):
         # Derive incident_dir from entry state if not in context
         ctx = LayerContext.from_any(context).merged_with_kwargs(kwargs)
         if ctx.incident_dir is None and entry is not None:
-            cy, cx = entry.grid.ny // 2, entry.grid.nx // 2
+            cy, cx = entry.native_grid.ny // 2, entry.native_grid.nx // 2
             az_deg = float(entry.azimuth_deg[cy, cx])
             el_deg = float(entry.elevation_deg[cy, cx])
             ctx = LayerContext(

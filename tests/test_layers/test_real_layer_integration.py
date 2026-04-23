@@ -461,5 +461,5 @@ class TestGeometryConsistency:
         urban = l3.refine_urban(frame, entry=entry_state)
 
         assert entry_state.grid is frame.grid
-        assert terrain.grid is frame.grid
-        assert urban.grid is frame.grid
+        assert terrain.native_grid is object.__getattribute__(frame, "grid")
+        assert urban.native_grid is object.__getattribute__(frame, "grid")

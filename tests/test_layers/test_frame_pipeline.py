@@ -206,9 +206,9 @@ def test_vertical_slice_grid_consistency(frame):
     terrain = l2.propagate_terrain(frame, entry=entry)
     urban = l3.refine_urban(frame, entry=entry)
 
-    assert entry.grid is frame.grid
-    assert terrain.grid is frame.grid
-    assert urban.grid is frame.grid
+    assert entry.native_grid is object.__getattribute__(frame, "grid")
+    assert terrain.native_grid is object.__getattribute__(frame, "grid")
+    assert urban.native_grid is object.__getattribute__(frame, "grid")
 
 
 def test_vertical_slice_output_shapes(frame):

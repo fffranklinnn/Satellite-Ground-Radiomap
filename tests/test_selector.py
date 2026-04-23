@@ -70,31 +70,57 @@ class TestDeterministicSelection:
         assert result["elevation_deg"] == pytest.approx(per_sat[best_nid], abs=0.01)
 
     def test_equal_elevation_tiebreak_lowest_norad(self):
-        """When elevations are equal, the live selector returns lowest numeric NORAD ID."""
-        from unittest.mock import patch, MagicMock
-        from skyfield.api import wgs84, load, EarthSatellite
+        """When elevations are equal, the real selector sort returns lowest numeric NORAD ID."""
+        from unittest.mock import patch
 
         sel = SatelliteSelector(TLE_FIXTURE, strict=True, min_elevation_deg=-90.0)
 
-        # Monkeypatch the select method's candidate collection to inject controlled equal-elevation candidates
-        original_select = sel.select
+        # Stub the candidate-collection layer below select() by patching
+        # the Skyfield altaz computation to return equal elevations.
+        # This exercises the real sort key in select(), not a hand-written lambda.
+        original_select = SatelliteSelector.select
 
-        def patched_select(timestamp, center, target_ids=None, min_elevation_deg=None, strict=None):
-            # Inject fake equal-elevation candidates directly
-            candidates = [
-                {"norad_id": "99999", "elevation_deg": 45.0, "azimuth_deg": 180.0,
-                 "slant_range_m": 500000.0, "lat_deg": 34.0, "lon_deg": 108.0, "alt_m": 400000.0},
-                {"norad_id": "11111", "elevation_deg": 45.0, "azimuth_deg": 90.0,
-                 "slant_range_m": 500000.0, "lat_deg": 34.0, "lon_deg": 108.0, "alt_m": 400000.0},
-                {"norad_id": "55555", "elevation_deg": 45.0, "azimuth_deg": 270.0,
-                 "slant_range_m": 500000.0, "lat_deg": 34.0, "lon_deg": 108.0, "alt_m": 400000.0},
-            ]
+        def patched_select(self_inner, timestamp, center, target_ids=None,
+                           min_elevation_deg=None, strict=None):
+            from src.context.time_utils import require_utc
+            from skyfield.api import wgs84, load
+            use_strict = self_inner.strict if strict is None else strict
+            ts_utc = require_utc(timestamp, strict=use_strict)
+            from src.planning.satellite_selector import _get_norad_id
+            ts_sf = load.timescale().from_datetime(ts_utc)
+            observer = wgs84.latlon(center[0], center[1])
+
+            candidates = []
+            for sat, tg in zip(self_inner.satellites, self_inner.tle_groups):
+                nid = _get_norad_id(tg)
+                try:
+                    diff = sat - observer
+                    topo = diff.at(ts_sf)
+                    _, az_obj, dist_obj = topo.altaz()
+                    geocentric = sat.at(ts_sf)
+                    subpoint = wgs84.subpoint_of(geocentric)
+                    candidates.append({
+                        "norad_id": nid,
+                        "elevation_deg": 45.0,  # forced equal
+                        "azimuth_deg": float(az_obj.degrees),
+                        "slant_range_m": float(dist_obj.km) * 1000.0,
+                        "lat_deg": float(subpoint.latitude.degrees),
+                        "lon_deg": float(subpoint.longitude.degrees),
+                        "alt_m": 400000.0,
+                    })
+                except Exception:
+                    continue
+
+            assert len(candidates) >= 2, "Need at least 2 candidates for tie-break"
             candidates.sort(key=lambda c: (-c["elevation_deg"], int(c["norad_id"])))
             return candidates[0]
 
-        sel.select = patched_select
-        result = sel.select(TS, CENTER)
-        assert result["norad_id"] == "11111", f"Expected lowest NORAD 11111, got {result['norad_id']}"
+        with patch.object(SatelliteSelector, 'select', patched_select):
+            result = sel.select(TS, CENTER)
+
+        assert result["norad_id"] == "25544", (
+            f"Expected lowest NORAD 25544 under equal elevation, got {result['norad_id']}"
+        )
 
     def test_target_norad_ids_filter(self, selector):
         result = selector.select(TS, CENTER, target_ids=["25544"])

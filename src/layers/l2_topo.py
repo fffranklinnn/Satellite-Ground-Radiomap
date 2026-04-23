@@ -447,10 +447,10 @@ class L2TopoLayer(BaseLayer):
         sat_azimuth_deg = frame.sat_azimuth_deg
         if sat_elevation_deg is None and entry is not None:
             # Use center-pixel elevation from entry state as representative value
-            cy, cx = entry.grid.ny // 2, entry.grid.nx // 2
+            cy, cx = entry.native_grid.ny // 2, entry.native_grid.nx // 2
             sat_elevation_deg = float(entry.elevation_deg[cy, cx])
         if sat_azimuth_deg is None and entry is not None:
-            cy, cx = entry.grid.ny // 2, entry.grid.nx // 2
+            cy, cx = entry.native_grid.ny // 2, entry.native_grid.nx // 2
             sat_azimuth_deg = float(entry.azimuth_deg[cy, cx])
 
         # Build context with satellite geometry

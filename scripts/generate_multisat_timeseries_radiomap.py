@@ -246,9 +246,9 @@ def compute_satellite_maps(
         "lat_deg": entry.sat_lat_deg,
         "lon_deg": entry.sat_lon_deg,
         "alt_m": entry.sat_alt_m,
-        "azimuth_deg": float(entry.azimuth_deg[entry.grid.ny // 2, entry.grid.nx // 2]),
-        "elevation_deg": float(entry.elevation_deg[entry.grid.ny // 2, entry.grid.nx // 2]),
-        "slant_range_m": float(entry.slant_range_m[entry.grid.ny // 2, entry.grid.nx // 2]),
+        "azimuth_deg": float(entry.azimuth_deg[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
+        "elevation_deg": float(entry.elevation_deg[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
+        "slant_range_m": float(entry.slant_range_m[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
     }
 
     # L2: propagate_terrain uses frame.grid.sw_corner() — no manual extras injection
@@ -560,9 +560,24 @@ def main() -> None:
                     hash_files=True,
                     fallbacks_used=l1_layer.fallbacks_used,
                 )
+                # Build export frame with best satellite's geometry
+                best_sat = sat_entries[0] if sat_entries else {}
+                export_sat_info = {
+                    "norad_id": best_sat.get("norad_id"),
+                    "lat_deg": best_sat.get("lat_deg"),
+                    "lon_deg": best_sat.get("lon_deg"),
+                    "alt_m": best_sat.get("alt_m"),
+                    "elevation_deg": best_sat.get("elevation_deg"),
+                    "azimuth_deg": best_sat.get("azimuth_deg"),
+                    "slant_range_m": best_sat.get("slant_range_m"),
+                } if best_sat else None
+                import warnings as _w
+                with _w.catch_warnings():
+                    _w.simplefilter("ignore", DeprecationWarning)
+                    export_frame = frame_builder.build(ts, sat_info=export_sat_info, frame_id=base)
                 written, _ = export_dataset(
                     output_dir=out_dirs["npy"],
-                    frame=frame_builder.build(ts, frame_id=base),
+                    frame=export_frame,
                     product_types=["path_loss_map"],
                     multiscale=MultiScaleMap(
                         frame_id=base,

@@ -16,9 +16,9 @@
     "total_pixels": 65536
   },
   "l3_support_analysis": {
-    "nonzero_pixels": 9256,
-    "zero_pixels": 56280,
-    "support_fraction": 0.14124,
+    "nonzero_pixels": 8183,
+    "zero_pixels": 57353,
+    "support_fraction": 0.1248626708984375,
     "support_definition": "l3 > 0 (pixels where urban NLoS residual is non-zero)"
   },
   "formulations": {

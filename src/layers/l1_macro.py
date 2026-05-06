@@ -1073,24 +1073,39 @@ class L1MacroLayer(BaseLayer):
         # 6. Calculate ionospheric loss
         if self.ionex is not None:
             # Use IPP-based TEC query
+            sim_dt = self._sim_time.utc_datetime()
+            epoch_sec = (
+                sim_dt.hour * 3600 +
+                sim_dt.minute * 60 +
+                sim_dt.second +
+                sim_dt.microsecond / 1e6
+            )
             tec_vtec_map = np.full_like(lat_grid, self.default_tec, dtype=np.float32)
             if self.use_ipp:
-                for i in range(GRID_SIZE):
-                    for j in range(GRID_SIZE):
-                        ipp_lat, ipp_lon = ipp_from_ground(
-                            lat_grid[i, j], lon_grid[i, j],
-                            sat_info["lat_deg"], sat_info["lon_deg"], sat_info["alt_m"],
-                            self.iono_shell_height_km * 1000.0
-                        )
-                        tec_vtec_map[i, j] = self.ionex.get_tec(
-                            ipp_lat, ipp_lon, self._sim_time.utc_datetime()
-                        )
+                # get_azimuth_elevation returns incoming-wave azimuth; convert to
+                # ground->satellite azimuth before IPP projection.
+                az_to_sat = (azimuth + 180.0) % 360.0
+                ipp_lat, ipp_lon, mapping_factor = ipp_from_ground(
+                    lat_grid,
+                    lon_grid,
+                    az_to_sat,
+                    elevation_deg,
+                    shell_height_km=self.iono_shell_height_km,
+                    max_mapping_factor=self.max_mapping_factor,
+                )
+                tec_vtec_map = self.ionex.get_tec(
+                    epoch_sec,
+                    ipp_lat,
+                    ipp_lon,
+                )
+                if self.use_slant_tec:
+                    tec_vtec_map = tec_vtec_map * mapping_factor
             else:
-                for i in range(GRID_SIZE):
-                    for j in range(GRID_SIZE):
-                        tec_vtec_map[i, j] = self.ionex.get_tec(
-                            lat_grid[i, j], lon_grid[i, j], self._sim_time.utc_datetime()
-                        )
+                tec_vtec_map = self.ionex.get_tec(
+                    epoch_sec,
+                    lat_grid,
+                    lon_grid,
+                )
             iono_db = ionospheric_loss(self.frequency_ghz, tec_vtec_map)
         else:
             iono_db = ionospheric_loss(self.frequency_ghz, self.default_tec)

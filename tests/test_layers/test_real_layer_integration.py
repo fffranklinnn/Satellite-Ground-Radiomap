@@ -57,7 +57,7 @@ def l1_config():
 def l2_config():
     return {
         "enabled": True,
-        "dem_file": "data/l2_topo/dem.tif",
+        "dem_file": "data/l2_topo/china_dem_30.tif",
         "frequency_ghz": 2.0,
         "satellite_elevation_deg": 45.0,
         "satellite_azimuth_deg": 180.0,

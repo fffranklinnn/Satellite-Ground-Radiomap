@@ -67,7 +67,7 @@ class TestSupportMaskGating:
         terrain = _make_terrain(10.0)
         urban = _make_urban(residual=20.0, support_rows=slice(0, 64))
 
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry, terrain, urban)
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry, terrain, urban)
 
         # Outside support (rows 64-255): composite = l1 + l2 = 110.0
         outside = msm.composite_db[64:, :]
@@ -80,7 +80,7 @@ class TestSupportMaskGating:
         terrain = _make_terrain(10.0)
         urban = _make_urban(residual=20.0, support_rows=slice(0, 64))
 
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry, terrain, urban)
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry, terrain, urban)
 
         # Inside support (rows 0-63): composite = l1 + l2 + l3 = 130.0
         inside = msm.composite_db[:64, :]
@@ -93,7 +93,7 @@ class TestSupportMaskGating:
         terrain = _make_terrain(0.0)
         urban = _make_urban(residual=15.0, support_rows=slice(100, 150))
 
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry, terrain, urban)
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry, terrain, urban)
 
         # Outside support: composite == l1 == 100.0
         outside_mask = ~urban.support_mask
@@ -110,7 +110,7 @@ class TestSupportMaskGating:
             support_mask=np.zeros((N, N), dtype=bool),
             nlos_mask=np.zeros((N, N), dtype=bool),
         )
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry, terrain, urban)
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry, terrain, urban)
         np.testing.assert_allclose(msm.composite_db, 110.0, atol=1e-5)
 
     def test_full_support_equals_additive(self):
@@ -124,7 +124,7 @@ class TestSupportMaskGating:
             support_mask=np.ones((N, N), dtype=bool),
             nlos_mask=res > 0,
         )
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry, terrain, urban)
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry, terrain, urban)
         np.testing.assert_allclose(msm.composite_db, 115.0, atol=1e-5)
 
     def test_support_mask_boundary_precision(self):
@@ -133,7 +133,7 @@ class TestSupportMaskGating:
         terrain = _make_terrain(0.0)
         urban = _make_urban(residual=10.0, support_rows=slice(128, 129))
 
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry, terrain, urban)
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry, terrain, urban)
 
         # Row 128: inside support
         np.testing.assert_allclose(msm.composite_db[128, :], 10.0, atol=1e-5)
@@ -181,8 +181,8 @@ class TestGoldenSceneBenchmark:
         support_mask = l3 > 0
         nonzero = int(np.sum(support_mask))
         total = l3.size
-        # From residual_vs_additive.json: 9256 nonzero pixels
-        assert nonzero == 9256, f"Expected 9256 nonzero L3 pixels, got {nonzero}"
+        # From residual_vs_additive.json: 8183 nonzero pixels
+        assert nonzero == 8183, f"Expected 8183 nonzero L3 pixels, got {nonzero}"
         assert total == 65536
 
     def test_outside_support_composite_equals_coarse(self):

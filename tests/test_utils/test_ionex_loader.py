@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-IONEX_PATH = "data/l1_space/data/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
+IONEX_PATH = "data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250020000_01D_15M_GIM.INX.gz"
 
 
 @pytest.fixture(scope="module")

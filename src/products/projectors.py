@@ -94,7 +94,7 @@ def project(
             product_grid=_product_grid, entry=entry, terrain=terrain, urban=urban,
             frame_id=frame.frame_id,
         )
-        msm = MultiScaleMap.compose_projected(
+        msm = MultiScaleMap.compose(
             frame_id=frame.frame_id,
             product_grid=_product_grid,
             **projected,

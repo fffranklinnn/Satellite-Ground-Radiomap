@@ -194,44 +194,34 @@ def project_to_product_grid(
     """
     Project layer state fields onto product_grid for composition.
 
-    Returns a dict with projected arrays ready for compose_projected():
-        l1_loss, l2_loss, l3_residual, l3_support, l1_grid, l2_grid, l3_grid
-
-    This is the canonical runtime API for Phase 3 projection.
+    Returns a dict with ProjectedView objects (not bare arrays):
+        l1_view, l2_view, l3_residual_view, l3_support_view
     """
     result = {
-        "l1_loss": None, "l2_loss": None,
-        "l3_residual": None, "l3_support": None,
-        "l1_grid": None, "l2_grid": None, "l3_grid": None,
+        "l1_view": None, "l2_view": None,
+        "l3_residual_view": None, "l3_support_view": None,
     }
 
     if entry is not None:
-        pv = project_field(
+        result["l1_view"] = project_field(
             entry.total_loss_db, entry.native_grid, product_grid,
             FieldType.LOSS_DB, frame_id,
         )
-        result["l1_loss"] = pv.values
-        result["l1_grid"] = entry.native_grid
 
     if terrain is not None:
-        pv = project_field(
+        result["l2_view"] = project_field(
             terrain.loss_db, terrain.native_grid, product_grid,
             FieldType.LOSS_DB, frame_id,
         )
-        result["l2_loss"] = pv.values
-        result["l2_grid"] = terrain.native_grid
 
     if urban is not None:
-        pv_res = project_field(
+        result["l3_residual_view"] = project_field(
             urban.urban_residual_db, urban.native_grid, product_grid,
             FieldType.LOSS_DB, frame_id,
         )
-        pv_sup = project_field(
+        result["l3_support_view"] = project_field(
             urban.support_mask.astype(np.float64), urban.native_grid, product_grid,
             FieldType.SUPPORT_MASK, frame_id,
         )
-        result["l3_residual"] = pv_res.values
-        result["l3_support"] = pv_sup.values
-        result["l3_grid"] = urban.native_grid
 
     return result

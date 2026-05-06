@@ -81,11 +81,87 @@ class MultiScaleMap:
                 )
 
     # ------------------------------------------------------------------
-    # Factory: masked residual compositor (canonical)
+    # Factory: canonical projected compositor
     # ------------------------------------------------------------------
 
     @classmethod
     def compose(
+        cls,
+        frame_id: str,
+        product_grid: GridSpec,
+        l1_view=None,
+        l2_view=None,
+        l3_residual_view=None,
+        l3_support_view=None,
+    ) -> "MultiScaleMap":
+        """
+        Assemble a MultiScaleMap from ProjectedView objects on product_grid.
+
+        This is the canonical composition API. All inputs must be ProjectedView
+        instances whose product_grid matches the declared product_grid exactly
+        (including resolution, not just shape and center).
+
+        Raises:
+            GridMismatchError: If any view's product_grid differs from product_grid.
+            TypeError: If any input is not a ProjectedView.
+        """
+        from src.compose import ProjectedView
+
+        expected = (product_grid.ny, product_grid.nx)
+        composite = np.zeros(expected, dtype=np.float32)
+        l1_db = l2_db = l3_db = l3_mask = None
+
+        for label, view in [("l1", l1_view), ("l2", l2_view),
+                            ("l3_residual", l3_residual_view), ("l3_support", l3_support_view)]:
+            if view is None:
+                continue
+            if not isinstance(view, ProjectedView):
+                raise TypeError(
+                    f"MultiScaleMap.compose() requires ProjectedView inputs, "
+                    f"got {type(view).__name__} for {label}. "
+                    f"Use project_to_product_grid() to project states first."
+                )
+            if view.product_grid != product_grid:
+                raise GridMismatchError(
+                    f"{label}: ProjectedView.product_grid does not match the declared "
+                    f"product_grid. View grid: {view.product_grid!r}, "
+                    f"expected: {product_grid!r}. "
+                    f"This can happen when arrays have matching shape but different "
+                    f"resolution or extent."
+                )
+
+        if l1_view is not None:
+            l1_db = l1_view.values.astype(np.float32, copy=False)
+            composite = composite + l1_db
+
+        if l2_view is not None:
+            l2_db = l2_view.values.astype(np.float32, copy=False)
+            composite = composite + l2_db
+
+        if l3_residual_view is not None:
+            if l3_support_view is not None:
+                l3_mask = l3_support_view.values.astype(bool, copy=False)
+                l3_db = np.where(l3_mask, l3_residual_view.values, 0.0).astype(np.float32)
+            else:
+                l3_db = l3_residual_view.values.astype(np.float32, copy=False)
+            composite = composite + l3_db
+
+        return cls(
+            frame_id=frame_id,
+            grid=product_grid,
+            composite_db=composite,
+            l1_db=l1_db,
+            l2_db=l2_db,
+            l3_db=l3_db,
+            l3_support_mask=l3_mask,
+        )
+
+    # ------------------------------------------------------------------
+    # Factory: legacy native-state compositor (deprecated)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def compose_legacy(
         cls,
         frame_id: str,
         grid: GridSpec,
@@ -164,7 +240,7 @@ class MultiScaleMap:
         )
 
     # ------------------------------------------------------------------
-    # Factory: projected composition (canonical new path)
+    # Factory: deprecated bare-array projected composition
     # ------------------------------------------------------------------
 
     @classmethod

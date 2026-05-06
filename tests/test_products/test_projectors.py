@@ -74,7 +74,7 @@ def urban(frame):
 
 @pytest.fixture
 def multiscale(frame, entry, terrain, urban):
-    return MultiScaleMap.compose(frame.frame_id, GRID, entry, terrain, urban)
+    return MultiScaleMap.compose_legacy(frame.frame_id, GRID, entry, terrain, urban)
 
 
 @pytest.fixture

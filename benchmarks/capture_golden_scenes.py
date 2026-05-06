@@ -94,7 +94,7 @@ def capture(config_path: str, output_dir: Path) -> None:
     entry = l1.propagate_entry(frame)
     # Collect fallbacks from L1 (constructor-time + per-frame)
     l1_fallbacks = list(l1.fallbacks_used)
-    msm_l1 = MultiScaleMap.compose(frame_id=frame.frame_id, grid=frame.grid,
+    msm_l1 = MultiScaleMap.compose_legacy(frame_id=frame.frame_id, grid=frame.grid,
                                     entry=entry, terrain=None, urban=None)
     l1_map = msm_l1.composite_db
     np.save(output_dir / "l1_only.npy", l1_map)
@@ -113,7 +113,7 @@ def capture(config_path: str, output_dir: Path) -> None:
 
     # --- L1 + L2 composite ---
     print("Capturing L1+L2 scene...")
-    msm_l1l2 = MultiScaleMap.compose(frame_id=frame.frame_id, grid=frame.grid,
+    msm_l1l2 = MultiScaleMap.compose_legacy(frame_id=frame.frame_id, grid=frame.grid,
                                       entry=entry, terrain=terrain, urban=None)
     composite_l1l2 = msm_l1l2.composite_db
     np.save(output_dir / "l1l2_composite.npy", composite_l1l2)
@@ -126,7 +126,7 @@ def capture(config_path: str, output_dir: Path) -> None:
     print("Capturing L1+L2+L3 scene...")
     l3 = L3UrbanLayer(l3_cfg, origin_lat, origin_lon)
     urban = l3.refine_urban(frame, entry=entry)
-    msm_full = MultiScaleMap.compose(frame_id=frame.frame_id, grid=frame.grid,
+    msm_full = MultiScaleMap.compose_legacy(frame_id=frame.frame_id, grid=frame.grid,
                                       entry=entry, terrain=terrain, urban=urban)
     composite_full = msm_full.composite_db
     np.save(output_dir / "l1l2l3_composite.npy", composite_full)

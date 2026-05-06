@@ -28,44 +28,47 @@ def _grid(coverage_km, nx, ny, role="legacy"):
 
 
 class TestComposeProjected:
+    def _pv(self, arr, grid, ft=FieldType.LOSS_DB):
+        """Helper to wrap an array as a ProjectedView on the given grid."""
+        return ProjectedView(source_grid=grid, product_grid=grid, field_type=ft, values=arr, frame_id="test")
+
     def test_non_urban_equals_coarse_backbone(self):
         """Outside urban support, composite = L1 + L2 exactly."""
         pg = _grid(25.6, 64, 64, "product")
-        l1 = np.full((64, 64), 150.0, dtype=np.float32)
-        l2 = np.full((64, 64), 10.0, dtype=np.float32)
-        msm = MultiScaleMap.compose_projected(
-            frame_id="test", product_grid=pg,
-            l1_loss=l1, l2_loss=l2,
-        )
+        l1 = self._pv(np.full((64, 64), 150.0, dtype=np.float32), pg)
+        l2 = self._pv(np.full((64, 64), 10.0, dtype=np.float32), pg)
+        msm = MultiScaleMap.compose(frame_id="test", product_grid=pg, l1_view=l1, l2_view=l2)
         np.testing.assert_array_almost_equal(msm.composite_db, 160.0)
 
     def test_urban_residual_only_within_support(self):
         """L3 residual applied only where support_mask is True."""
         pg = _grid(25.6, 64, 64, "product")
-        l1 = np.full((64, 64), 150.0, dtype=np.float32)
-        l2 = np.zeros((64, 64), dtype=np.float32)
-        l3 = np.full((64, 64), 5.0, dtype=np.float32)
-        support = np.zeros((64, 64), dtype=bool)
-        support[:32, :32] = True
-
-        msm = MultiScaleMap.compose_projected(
-            frame_id="test", product_grid=pg,
-            l1_loss=l1, l2_loss=l2,
-            l3_residual=l3, l3_support=support,
-        )
-        # Inside support: 150 + 0 + 5 = 155
+        l1 = self._pv(np.full((64, 64), 150.0, dtype=np.float32), pg)
+        l2 = self._pv(np.zeros((64, 64), dtype=np.float32), pg)
+        l3_res = self._pv(np.full((64, 64), 5.0, dtype=np.float32), pg)
+        sup = np.zeros((64, 64), dtype=bool)
+        sup[:32, :32] = True
+        l3_sup = ProjectedView(source_grid=pg, product_grid=pg, field_type=FieldType.SUPPORT_MASK, values=sup, frame_id="test")
+        msm = MultiScaleMap.compose(frame_id="test", product_grid=pg, l1_view=l1, l2_view=l2, l3_residual_view=l3_res, l3_support_view=l3_sup)
         assert msm.composite_db[0, 0] == pytest.approx(155.0)
-        # Outside support: 150 + 0 + 0 = 150
         assert msm.composite_db[63, 63] == pytest.approx(150.0)
 
-    def test_shape_mismatch_raises(self):
-        """Passing arrays with wrong shape raises ShapeError."""
+    def test_raw_array_rejected(self):
+        """Passing raw arrays (not ProjectedView) raises TypeError."""
         pg = _grid(25.6, 64, 64, "product")
-        wrong_shape = np.zeros((32, 32), dtype=np.float32)
-        with pytest.raises(ShapeError, match="product_grid"):
-            MultiScaleMap.compose_projected(
-                frame_id="test", product_grid=pg, l1_loss=wrong_shape,
-            )
+        raw = np.full((64, 64), 150.0, dtype=np.float32)
+        with pytest.raises(TypeError, match="ProjectedView"):
+            MultiScaleMap.compose(frame_id="test", product_grid=pg, l1_view=raw)
+
+    def test_same_center_different_resolution_rejected(self):
+        """Same center, same shape, different resolution must raise GridMismatchError."""
+        from src.context.multiscale_map import GridMismatchError
+        pg = _grid(0.256, 256, 256, "product")  # 256m, 256x256, 1m/px
+        wrong_grid = _grid(256.0, 256, 256, "l1_macro")  # 256km, 256x256, 1000m/px — same center, same shape!
+        l1 = ProjectedView(source_grid=wrong_grid, product_grid=wrong_grid, field_type=FieldType.LOSS_DB,
+                           values=np.ones((256, 256), dtype=np.float32), frame_id="test")
+        with pytest.raises(GridMismatchError):
+            MultiScaleMap.compose(frame_id="test", product_grid=pg, l1_view=l1)
 
 
 class TestProjectionContracts:
@@ -144,7 +147,7 @@ class TestGoldenRegressions:
             product_grid=cs.product_grid, entry=entry, terrain=terrain, urban=urban,
             frame_id="t",
         )
-        msm = MultiScaleMap.compose_projected(
+        msm = MultiScaleMap.compose(
             frame_id="t", product_grid=cs.product_grid, **projected,
         )
         assert msm.composite_db.shape == (32, 32)
@@ -157,13 +160,17 @@ class TestGoldenRegressions:
     def test_outside_urban_equals_coarse_backbone_exactly(self):
         """Non-urban pixels must equal L1+L2 backbone exactly."""
         pg = _grid(25.6, 32, 32, "product")
-        l1 = np.full((32, 32), 150.0, dtype=np.float32)
-        l2 = np.full((32, 32), 10.0, dtype=np.float32)
-        l3 = np.full((32, 32), 5.0, dtype=np.float32)
-        support = np.zeros((32, 32), dtype=bool)  # no urban support
-        msm = MultiScaleMap.compose_projected(
+        l1 = ProjectedView(source_grid=pg, product_grid=pg, field_type=FieldType.LOSS_DB,
+                           values=np.full((32, 32), 150.0, dtype=np.float32), frame_id="t")
+        l2 = ProjectedView(source_grid=pg, product_grid=pg, field_type=FieldType.LOSS_DB,
+                           values=np.full((32, 32), 10.0, dtype=np.float32), frame_id="t")
+        l3_res = ProjectedView(source_grid=pg, product_grid=pg, field_type=FieldType.LOSS_DB,
+                               values=np.full((32, 32), 5.0, dtype=np.float32), frame_id="t")
+        l3_sup = ProjectedView(source_grid=pg, product_grid=pg, field_type=FieldType.SUPPORT_MASK,
+                               values=np.zeros((32, 32), dtype=bool), frame_id="t")
+        msm = MultiScaleMap.compose(
             frame_id="t", product_grid=pg,
-            l1_loss=l1, l2_loss=l2, l3_residual=l3, l3_support=support,
+            l1_view=l1, l2_view=l2, l3_residual_view=l3_res, l3_support_view=l3_sup,
         )
         np.testing.assert_array_equal(msm.composite_db, 160.0)
 
@@ -172,9 +179,8 @@ class TestGoldenRegressions:
         from src.context.multiscale_map import GridMismatchError
         pg = _grid(25.6, 32, 32, "product")
         different_center = GridSpec.from_legacy_args(35.0, 109.0, 25.6, 32, 32, role="l1_macro")
-        l1 = np.ones((32, 32), dtype=np.float32) * 150
+        l1 = ProjectedView(source_grid=different_center, product_grid=different_center,
+                           field_type=FieldType.LOSS_DB,
+                           values=np.ones((32, 32), dtype=np.float32) * 150, frame_id="t")
         with pytest.raises(GridMismatchError):
-            MultiScaleMap.compose_projected(
-                frame_id="t", product_grid=pg,
-                l1_loss=l1, l1_grid=different_center,
-            )
+            MultiScaleMap.compose(frame_id="t", product_grid=pg, l1_view=l1)

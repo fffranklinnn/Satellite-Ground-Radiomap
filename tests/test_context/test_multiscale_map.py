@@ -63,7 +63,7 @@ def _urban(residual=15.0, support_fraction=0.5):
 
 class TestCompose:
     def test_all_layers_present(self):
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, _entry(), _terrain(), _urban())
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, _entry(), _terrain(), _urban())
         assert msm.composite_db.shape == (N, N)
         assert msm.l1_db is not None
         assert msm.l2_db is not None
@@ -72,7 +72,7 @@ class TestCompose:
 
     def test_composite_values_with_support_mask(self):
         """L3 residual applied only in top half (support_mask)."""
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, _entry(total=153.5), _terrain(20.0), _urban(15.0))
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, _entry(total=153.5), _terrain(20.0), _urban(15.0))
         half = N // 2
         # Top half: l1 + l2 + l3
         np.testing.assert_allclose(msm.composite_db[:half, :], 153.5 + 20.0 + 15.0, atol=1e-4)
@@ -81,28 +81,28 @@ class TestCompose:
 
     def test_l3_zero_outside_support(self):
         """l3_db must be zero outside support_mask."""
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, _entry(), _terrain(), _urban())
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, _entry(), _terrain(), _urban())
         half = N // 2
         assert np.all(msm.l3_db[half:, :] == 0.0)
 
     def test_no_l1(self):
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry=None, terrain=_terrain(20.0))
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry=None, terrain=_terrain(20.0))
         assert msm.l1_db is None
         np.testing.assert_allclose(msm.composite_db, 20.0, atol=1e-4)
 
     def test_no_l2(self):
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry=_entry(total=100.0), terrain=None)
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry=_entry(total=100.0), terrain=None)
         assert msm.l2_db is None
         np.testing.assert_allclose(msm.composite_db, 100.0, atol=1e-4)
 
     def test_no_l3(self):
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, entry=_entry(total=100.0), terrain=_terrain(10.0))
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry=_entry(total=100.0), terrain=_terrain(10.0))
         assert msm.l3_db is None
         assert msm.l3_support_mask is None
         np.testing.assert_allclose(msm.composite_db, 110.0, atol=1e-4)
 
     def test_all_absent_gives_zero(self):
-        msm = MultiScaleMap.compose(FRAME_ID, GRID)
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID)
         np.testing.assert_allclose(msm.composite_db, 0.0, atol=1e-4)
 
     def test_shape_error_on_mismatched_entry(self):
@@ -121,21 +121,21 @@ class TestCompose:
             occlusion_mask=np.zeros((128, 128), dtype=bool),
         )
         with pytest.raises(ShapeError):
-            MultiScaleMap.compose(FRAME_ID, GRID, entry=bad_entry)
+            MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry=bad_entry)
 
     def test_frame_id_preserved(self):
-        msm = MultiScaleMap.compose("my_frame", GRID, _entry("my_frame"))
+        msm = MultiScaleMap.compose_legacy("my_frame", GRID, _entry("my_frame"))
         assert msm.frame_id == "my_frame"
 
     def test_grid_preserved(self):
-        msm = MultiScaleMap.compose(FRAME_ID, GRID, _entry())
+        msm = MultiScaleMap.compose_legacy(FRAME_ID, GRID, _entry())
         assert msm.grid is GRID
 
     def test_frame_id_mismatch_raises(self):
         """compose() must raise FrameMismatchError when state.frame_id != frame_id."""
         wrong_entry = _entry("wrong_frame")
         with pytest.raises(FrameMismatchError):
-            MultiScaleMap.compose(FRAME_ID, GRID, entry=wrong_entry)
+            MultiScaleMap.compose_legacy(FRAME_ID, GRID, entry=wrong_entry)
 
     def test_terrain_frame_id_mismatch_raises(self):
         loss = np.zeros((N, N), dtype=np.float32)
@@ -144,7 +144,7 @@ class TestCompose:
             loss_db=loss, occlusion_mask=np.zeros((N, N), dtype=bool),
         )
         with pytest.raises(FrameMismatchError):
-            MultiScaleMap.compose(FRAME_ID, GRID, terrain=wrong_terrain)
+            MultiScaleMap.compose_legacy(FRAME_ID, GRID, terrain=wrong_terrain)
 
 
 # ---------------------------------------------------------------------------

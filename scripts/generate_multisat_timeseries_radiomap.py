@@ -103,6 +103,43 @@ def resolve_path(project_root: Path, value: Optional[str]) -> Optional[Path]:
     return project_root / p
 
 
+def normalize_layer_paths(project_root: Path, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve layer input paths against the project root for runtime checks."""
+    normalized = dict(config)
+    layers = config.get("layers", {})
+    if not isinstance(layers, dict):
+        return normalized
+
+    normalized_layers: Dict[str, Any] = {}
+    for layer_name, layer_cfg in layers.items():
+        if not isinstance(layer_cfg, dict):
+            normalized_layers[layer_name] = layer_cfg
+            continue
+
+        layer_copy = dict(layer_cfg)
+        if layer_name == "l1_macro":
+            tle_cfg = layer_copy.get("tle")
+            if isinstance(tle_cfg, dict):
+                tle_copy = dict(tle_cfg)
+                tle_copy["file"] = str(resolve_path(project_root, tle_copy.get("file"))) if tle_copy.get("file") else tle_copy.get("file")
+                layer_copy["tle"] = tle_copy
+            else:
+                layer_copy["tle_file"] = str(resolve_path(project_root, layer_copy.get("tle_file"))) if layer_copy.get("tle_file") else layer_copy.get("tle_file")
+            for key in ("ionex_file", "era5_file"):
+                if layer_copy.get(key):
+                    layer_copy[key] = str(resolve_path(project_root, layer_copy[key]))
+        elif layer_name == "l2_topo" and layer_copy.get("dem_file"):
+            layer_copy["dem_file"] = str(resolve_path(project_root, layer_copy["dem_file"]))
+        elif layer_name == "l3_urban":
+            for key in ("tile_cache_root", "data_dir", "tiles_dir"):
+                if layer_copy.get(key):
+                    layer_copy[key] = str(resolve_path(project_root, layer_copy[key]))
+        normalized_layers[layer_name] = layer_copy
+
+    normalized["layers"] = normalized_layers
+    return normalized
+
+
 def build_frame_builder_for_script(config: dict, origin_lat: float, origin_lon: float) -> FrameBuilder:
     """Build a FrameBuilder from config with real L1/L2/L3/product coverage geometry."""
     l1_cfg = config.get("layers", {}).get("l1_macro", {})
@@ -158,9 +195,10 @@ def check_required_data(project_root: Path,
                         *,
                         strict: bool,
                         benchmark: bool) -> None:
-    policy = resolve_layer_policy(config, strict=strict, benchmark=benchmark)
+    normalized_config = normalize_layer_paths(project_root, config)
+    policy = resolve_layer_policy(normalized_config, strict=strict, benchmark=benchmark)
     enabled = set(policy.enabled_layers)
-    layers_cfg = config.get("layers", {})
+    layers_cfg = normalized_config.get("layers", {})
     l1_cfg = layers_cfg.get("l1_macro", {})
     l2_cfg = layers_cfg.get("l2_topo", {})
     l3_cfg = layers_cfg.get("l3_urban", {})
@@ -361,17 +399,18 @@ def main() -> None:
         config_path = project_root / config_path
     config = load_config(config_path)
     strict = not args.allow_missing_data
-    policy = resolve_layer_policy(config, strict=strict, benchmark=False)
-    manifest_config = enabled_layer_config(config, policy.enabled_layers)
+    normalized_config = normalize_layer_paths(project_root, config)
+    policy = resolve_layer_policy(normalized_config, strict=strict, benchmark=False)
+    manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
     check_required_data(
         project_root,
-        config,
+        normalized_config,
         allow_missing=args.allow_missing_data,
         strict=strict,
         benchmark=False,
     )
 
-    layers_cfg = config["layers"]
+    layers_cfg = normalized_config["layers"]
     l1_cfg = layers_cfg["l1_macro"]
     l2_cfg = layers_cfg["l2_topo"]
     l3_cfg = layers_cfg["l3_urban"]
@@ -414,7 +453,7 @@ def main() -> None:
     l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
     l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon) if policy.is_enabled("l2_topo") else None
     l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon) if policy.is_enabled("l3_urban") else None
-    frame_builder = build_frame_builder_for_script(config, origin_lat, origin_lon)
+    frame_builder = build_frame_builder_for_script(normalized_config, origin_lat, origin_lon)
     input_file_paths = collect_input_file_paths(manifest_config, strict=strict)
 
     if target_norad_ids:

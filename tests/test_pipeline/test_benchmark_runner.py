@@ -187,10 +187,27 @@ class TestBenchmarkRunnerManifest:
             manifest = runner.run_frame(TS_UTC, tmp_path, ["path_loss_map"])
         assert manifest.data_snapshot_id == SNAPSHOT_ID
 
-    def test_run_frame_records_resolved_layer_combination(self, tmp_path):
-        """Benchmark artifacts must record the resolved layer set for the scene."""
+    @pytest.mark.parametrize(
+        "scene_profile,expected_enabled,expected_disabled,expected_l2_calls,expected_l3_calls",
+        [
+            ("plain_sparse", ("l1_macro",), {"l2_topo": "scene_policy", "l3_urban": "scene_policy"}, 0, 0),
+            ("mountain_rural", ("l1_macro", "l2_topo"), {"l3_urban": "scene_policy"}, 1, 0),
+            ("urban_flat", ("l1_macro", "l3_urban"), {"l2_topo": "scene_policy"}, 0, 1),
+            ("suburban_mixed", ("l1_macro", "l2_topo", "l3_urban"), {}, 1, 1),
+        ],
+    )
+    def test_run_frame_records_resolved_layer_combination(
+        self,
+        tmp_path,
+        scene_profile,
+        expected_enabled,
+        expected_disabled,
+        expected_l2_calls,
+        expected_l3_calls,
+    ):
+        """Benchmark artifacts must record the resolved layer set for every scene profile."""
         config = {
-            "scene": {"profile": "plain_sparse"},
+            "scene": {"profile": scene_profile},
             "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
             "layers": {
                 "l1_macro": {"enabled": True},
@@ -199,9 +216,9 @@ class TestBenchmarkRunnerManifest:
             },
             "data_validation": {"strict": False},
         }
-        l1, l2, l3 = _make_mock_layers("plain_frame")
+        l1, l2, l3 = _make_mock_layers(f"{scene_profile}_frame")
         runner = BenchmarkRunner(
-            frame_builder=MagicMock(build=MagicMock(return_value=FrameContext(frame_id="plain_frame", timestamp=TS_UTC, grid=GRID))),
+            frame_builder=MagicMock(build=MagicMock(return_value=FrameContext(frame_id=f"{scene_profile}_frame", timestamp=TS_UTC, grid=GRID))),
             l1_layer=l1,
             l2_layer=l2,
             l3_layer=l3,
@@ -215,10 +232,16 @@ class TestBenchmarkRunnerManifest:
              patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((N, N), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)):
             manifest = runner.run_frame(TS_UTC, tmp_path, ["path_loss_map"])
 
-        assert manifest.metadata["scene_profile"] == "plain_sparse"
-        assert manifest.metadata["enabled_layers"] == ("l1_macro",)
-        assert manifest.metadata["disabled_layers"]["l2_topo"]["reason_type"] == "scene_policy"
-        assert manifest.metadata["disabled_layers"]["l3_urban"]["reason_type"] == "scene_policy"
+        assert l2.propagate_terrain.call_count == expected_l2_calls
+        assert l3.refine_urban.call_count == expected_l3_calls
+        assert manifest.metadata["scene_profile"] == scene_profile
+        assert manifest.metadata["enabled_layers"] == expected_enabled
+        assert manifest.metadata["layer_policy_version"]
+        for layer_name in ("l2_topo", "l3_urban"):
+            if layer_name in expected_disabled:
+                assert manifest.metadata["disabled_layers"][layer_name]["reason_type"] == expected_disabled[layer_name]
+            else:
+                assert layer_name not in manifest.metadata["disabled_layers"]
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ from src.context.frame_context import FrameContext
 from src.context.grid_spec import GridSpec
 from src.pipeline.benchmark_runner import BenchmarkRunner
 from src.planning import MissingRequiredInputError, resolve_layer_policy
+from src.planning import enabled_layer_config
 
 
 ORIGIN_LAT = 34.0
@@ -272,6 +273,43 @@ def test_multisat_check_required_data_ignores_scene_disabled_inputs(tmp_path):
         strict=False,
         benchmark=False,
     )
+
+
+def test_multisat_strict_paths_use_project_root(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    dem_path = project_root / "data" / "dem.tif"
+    dem_path.write_text("dem", encoding="utf-8")
+    tiles_dir = project_root / "data" / "tiles"
+    tiles_dir.mkdir(parents=True)
+
+    config = {
+        "scene": {"profile": "urban_flat"},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": "data/starlink-2025-tle/2025-01-01.tle"},
+            "l2_topo": {"enabled": True, "dem_file": "data/dem.tif"},
+            "l3_urban": {"enabled": True, "tile_cache_root": "data/tiles"},
+        },
+    }
+
+    monkeypatch.chdir(tmp_path)
+    multisat_module.check_required_data(
+        project_root,
+        config,
+        allow_missing=False,
+        strict=True,
+        benchmark=False,
+    )
+    normalized = multisat_module.normalize_layer_paths(project_root, config)
+    paths = multisat_module.collect_input_file_paths(
+        multisat_module.enabled_layer_config(normalized, ("l1_macro", "l2_topo", "l3_urban")),
+        strict=True,
+    )
+    assert paths["tle_file"] == str(tle_path)
+    assert paths["dem_file"] == str(dem_path)
 
 
 def test_multisat_manifest_records_shared_policy_metadata(tmp_path):

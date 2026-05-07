@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import scripts.generate_multisat_timeseries_radiomap as multisat_module
 
 import main as main_module
 from src.context.frame_context import FrameContext
@@ -206,3 +207,92 @@ def test_benchmark_runner_strict_missing_input_raises(tmp_path):
 
     with pytest.raises(MissingRequiredInputError):
         runner.run_frame(TS, tmp_path, ["path_loss_map"])
+
+
+def test_multisat_compute_satellite_maps_respects_policy_disabled_layers():
+    l1 = MagicMock()
+    entry = MagicMock(
+        norad_id="25544",
+        sat_lat_deg=34.0,
+        sat_lon_deg=108.0,
+        sat_alt_m=550000.0,
+        azimuth_deg=np.full((8, 8), 180.0, dtype=np.float32),
+        elevation_deg=np.full((8, 8), 45.0, dtype=np.float32),
+        slant_range_m=np.full((8, 8), 600_000.0, dtype=np.float32),
+        total_loss_db=np.full((8, 8), 150.0, dtype=np.float32),
+        native_grid=GRID,
+    )
+    l1.propagate_entry.return_value = entry
+    l1.config = {"tle_file": "test.tle"}
+    l2 = MagicMock()
+    l3 = MagicMock()
+
+    frame_builder = MagicMock(grid=GRID, build=MagicMock(return_value=FRAME))
+    with patch("src.planning.satellite_selector.SatelliteSelector") as selector_cls, \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.full((8, 8), 150.0, dtype=np.float32))):
+        selector_cls.return_value.select.return_value = {"norad_id": "25544"}
+        l1_map, l2_map, l3_map, total_map, sat_info, frame = multisat_module.compute_satellite_maps(
+            l1_layer=l1,
+            l2_layer=l2,
+            l3_layer=l3,
+            frame_builder=frame_builder,
+            timestamp=TS,
+            norad_id="25544",
+            enable_l2=False,
+            enable_l3=False,
+        )
+
+    assert l2.propagate_terrain.call_count == 0
+    assert l3.refine_urban.call_count == 0
+    np.testing.assert_array_equal(l1_map, entry.total_loss_db)
+    np.testing.assert_array_equal(l2_map, np.zeros((8, 8), dtype=np.float32))
+    np.testing.assert_array_equal(l3_map, np.zeros((8, 8), dtype=np.float32))
+    np.testing.assert_array_equal(total_map, np.full((8, 8), 150.0, dtype=np.float32))
+    assert sat_info["norad_id"] == "25544"
+    assert frame is FRAME
+
+
+def test_multisat_check_required_data_ignores_scene_disabled_inputs(tmp_path):
+    tle_path = tmp_path / "test.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    config = {
+        "scene": {"profile": "urban_flat"},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": str(tle_path)},
+            "l2_topo": {"enabled": True, "dem_file": str(tmp_path / "missing-dem.tif")},
+            "l3_urban": {"enabled": True, "tile_cache_root": str(tmp_path)},
+        },
+    }
+
+    multisat_module.check_required_data(
+        tmp_path,
+        config,
+        allow_missing=False,
+        strict=False,
+        benchmark=False,
+    )
+
+
+def test_multisat_manifest_records_shared_policy_metadata(tmp_path):
+    config = {
+        "scene": {"profile": "mountain_rural"},
+        "layers": {
+            "l1_macro": {"enabled": True},
+            "l2_topo": {"enabled": True},
+            "l3_urban": {"enabled": True},
+        },
+    }
+
+    policy = resolve_layer_policy(config)
+    manifest = multisat_module.ProductManifest.build(
+        frame_id="frame_x",
+        timestamp_utc=TS.isoformat(),
+        config=config,
+        data_snapshot_id="snap_001",
+        metadata=multisat_module.layer_policy_metadata(policy),
+    )
+
+    assert manifest.metadata["scene_profile"] == "mountain_rural"
+    assert manifest.metadata["enabled_layers"] == ("l1_macro", "l2_topo")
+    assert manifest.metadata["disabled_layers"]["l3_urban"]["reason_type"] == "scene_policy"

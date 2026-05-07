@@ -35,6 +35,7 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import parse_iso_utc  # shared strict UTC helper
+from src.planning import enabled_layer_config, layer_policy_metadata, resolve_layer_policy
 from src.products.manifest import ProductManifest, collect_input_file_paths
 from src.products.projectors import export_dataset
 from src.pipeline.manifest_writer import ManifestWriter
@@ -153,22 +154,29 @@ def build_time_grid(start: datetime,
 
 def check_required_data(project_root: Path,
                         config: Dict[str, Any],
-                        allow_missing: bool) -> None:
+                        allow_missing: bool,
+                        *,
+                        strict: bool,
+                        benchmark: bool) -> None:
+    policy = resolve_layer_policy(config, strict=strict, benchmark=benchmark)
+    enabled = set(policy.enabled_layers)
     layers_cfg = config.get("layers", {})
     l1_cfg = layers_cfg.get("l1_macro", {})
     l2_cfg = layers_cfg.get("l2_topo", {})
     l3_cfg = layers_cfg.get("l3_urban", {})
 
     checks = [
-        ("TLE", resolve_path(project_root, l1_cfg.get("tle_file")), True),
-        ("IONEX", resolve_path(project_root, l1_cfg.get("ionex_file")), False),
-        ("ERA5", resolve_path(project_root, l1_cfg.get("era5_file")), False),
-        ("DEM", resolve_path(project_root, l2_cfg.get("dem_file")), True),
-        ("L3 Tile Cache", resolve_path(project_root, l3_cfg.get("tile_cache_root")), True),
+        ("TLE", resolve_path(project_root, l1_cfg.get("tle_file")), "l1_macro", True),
+        ("IONEX", resolve_path(project_root, l1_cfg.get("ionex_file")), "l1_macro", False),
+        ("ERA5", resolve_path(project_root, l1_cfg.get("era5_file")), "l1_macro", False),
+        ("DEM", resolve_path(project_root, l2_cfg.get("dem_file")), "l2_topo", True),
+        ("L3 Tile Cache", resolve_path(project_root, l3_cfg.get("tile_cache_root")), "l3_urban", True),
     ]
 
     missing_required: List[str] = []
-    for label, path_obj, required in checks:
+    for label, path_obj, layer_name, required in checks:
+        if layer_name not in enabled:
+            continue
         if path_obj is None:
             if required:
                 missing_required.append(f"{label}: <not configured>")
@@ -228,11 +236,14 @@ def frame_stamp(ts: datetime) -> str:
 
 def compute_satellite_maps(
     l1_layer: L1MacroLayer,
-    l2_layer: L2TopoLayer,
-    l3_layer: L3UrbanLayer,
+    l2_layer: Optional[L2TopoLayer],
+    l3_layer: Optional[L3UrbanLayer],
     frame_builder: FrameBuilder,
     timestamp: datetime,
     norad_id: str,
+    *,
+    enable_l2: bool,
+    enable_l3: bool,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any], "FrameContext"]:
     """
     Compute per-satellite maps using the FrameContext pipeline.
@@ -257,6 +268,7 @@ def compute_satellite_maps(
 
     # L1: propagate_entry uses frame-bound satellite geometry
     entry = l1_layer.propagate_entry(frame)
+    l1_map = entry.total_loss_db
     sat = {
         "norad_id": entry.norad_id or norad_id,
         "lat_deg": entry.sat_lat_deg,
@@ -268,14 +280,25 @@ def compute_satellite_maps(
     }
 
     # L2: propagate_terrain uses frame.grid.sw_corner() — no manual extras injection
-    terrain = l2_layer.propagate_terrain(frame, entry=entry)
+    if enable_l2:
+        if l2_layer is None:
+            raise RuntimeError("Layer policy enabled l2_topo but no L2 layer instance is available.")
+        terrain = l2_layer.propagate_terrain(frame, entry=entry)
+        l2_map = terrain.loss_db
+    else:
+        terrain = None
+        l2_map = np.zeros_like(l1_map, dtype=np.float32)
 
     # L3: refine_urban derives incident_dir from entry state
-    urban = l3_layer.refine_urban(frame, entry=entry)
+    if enable_l3:
+        if l3_layer is None:
+            raise RuntimeError("Layer policy enabled l3_urban but no L3 layer instance is available.")
+        urban = l3_layer.refine_urban(frame, entry=entry)
+        l3_map = urban.urban_residual_db
+    else:
+        urban = None
+        l3_map = np.zeros_like(l1_map, dtype=np.float32)
 
-    l1_map = entry.total_loss_db
-    l2_map = terrain.loss_db
-    l3_map = urban.urban_residual_db
     _cov = object.__getattribute__(frame, "coverage")
     _product_grid = _cov.product_grid if _cov is not None else object.__getattribute__(frame, "grid")
     from src.compose import project_to_product_grid
@@ -337,7 +360,16 @@ def main() -> None:
     if not config_path.is_absolute():
         config_path = project_root / config_path
     config = load_config(config_path)
-    check_required_data(project_root, config, allow_missing=args.allow_missing_data)
+    strict = not args.allow_missing_data
+    policy = resolve_layer_policy(config, strict=strict, benchmark=False)
+    manifest_config = enabled_layer_config(config, policy.enabled_layers)
+    check_required_data(
+        project_root,
+        config,
+        allow_missing=args.allow_missing_data,
+        strict=strict,
+        benchmark=False,
+    )
 
     layers_cfg = config["layers"]
     l1_cfg = layers_cfg["l1_macro"]
@@ -380,10 +412,10 @@ def main() -> None:
     out_dirs = make_output_dirs(out_root)
 
     l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
-    l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon)
-    l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon)
+    l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon) if policy.is_enabled("l2_topo") else None
+    l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon) if policy.is_enabled("l3_urban") else None
     frame_builder = build_frame_builder_for_script(config, origin_lat, origin_lon)
-    input_file_paths = collect_input_file_paths(config)
+    input_file_paths = collect_input_file_paths(manifest_config, strict=strict)
 
     if target_norad_ids:
         l1_layer.target_norad_ids = target_norad_ids
@@ -497,6 +529,8 @@ def main() -> None:
                                 frame_builder=frame_builder,
                                 timestamp=ts,
                                 norad_id=norad_id,
+                                enable_l2=policy.is_enabled("l2_topo"),
+                                enable_l3=policy.is_enabled("l3_urban"),
                             )
                             sat_meta = satellite_metadata(sat_info, l1_layer=l1_layer, rank=sat_rank)
                             sat_meta["compute_sec"] = round(time.time() - sat_t0, 3)
@@ -581,6 +615,7 @@ def main() -> None:
                     input_files=input_file_paths,
                     hash_files=True,
                     fallbacks_used=l1_layer.fallbacks_used,
+                    metadata=layer_policy_metadata(policy),
                 )
                 # Reuse the first satellite's pre-bound frame for export
                 export_frame = sat_frames[0] if sat_frames else frame_builder.build(ts, frame_id=base)
@@ -683,7 +718,8 @@ def main() -> None:
         print(f"  elapsed       : {fmt_seconds(time.time() - run_t0)}")
         print("=" * 88)
     finally:
-        l2_layer.close()
+        if l2_layer is not None:
+            l2_layer.close()
 
 
 if __name__ == "__main__":

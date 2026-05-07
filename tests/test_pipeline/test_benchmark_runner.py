@@ -187,6 +187,39 @@ class TestBenchmarkRunnerManifest:
             manifest = runner.run_frame(TS_UTC, tmp_path, ["path_loss_map"])
         assert manifest.data_snapshot_id == SNAPSHOT_ID
 
+    def test_run_frame_records_resolved_layer_combination(self, tmp_path):
+        """Benchmark artifacts must record the resolved layer set for the scene."""
+        config = {
+            "scene": {"profile": "plain_sparse"},
+            "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+            "layers": {
+                "l1_macro": {"enabled": True},
+                "l2_topo": {"enabled": True},
+                "l3_urban": {"enabled": True},
+            },
+            "data_validation": {"strict": False},
+        }
+        l1, l2, l3 = _make_mock_layers("plain_frame")
+        runner = BenchmarkRunner(
+            frame_builder=MagicMock(build=MagicMock(return_value=FrameContext(frame_id="plain_frame", timestamp=TS_UTC, grid=GRID))),
+            l1_layer=l1,
+            l2_layer=l2,
+            l3_layer=l3,
+            config=config,
+            data_snapshot_id=SNAPSHOT_ID,
+        )
+
+        with patch("src.pipeline.benchmark_runner.export_dataset", return_value=({"path_loss_map": str(tmp_path / "out.npy")}, None)), \
+             patch("src.pipeline.benchmark_runner.collect_input_file_paths", return_value={}), \
+             patch("src.compose.project_to_product_grid", return_value={}), \
+             patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((N, N), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)):
+            manifest = runner.run_frame(TS_UTC, tmp_path, ["path_loss_map"])
+
+        assert manifest.metadata["scene_profile"] == "plain_sparse"
+        assert manifest.metadata["enabled_layers"] == ("l1_macro",)
+        assert manifest.metadata["disabled_layers"]["l2_topo"]["reason_type"] == "scene_policy"
+        assert manifest.metadata["disabled_layers"]["l3_urban"]["reason_type"] == "scene_policy"
+
 
 # ---------------------------------------------------------------------------
 # Reproducibility: relative error < 1e-6
@@ -1016,4 +1049,3 @@ class TestTopLevelStrictViaDataValidation:
         assert _resolve_strict_flag({"strict_data": True}) is True
         assert _resolve_strict_flag({"strict_mode": True}) is True
         assert _resolve_strict_flag({}) is False
-

@@ -27,7 +27,7 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import require_utc
-from src.planning import layer_policy_metadata, resolve_layer_policy
+from src.planning import enabled_layer_config, layer_policy_metadata, resolve_layer_policy
 from src.products.manifest import ProductManifest, collect_input_file_paths
 from src.products.projectors import export_dataset
 from src.pipeline.manifest_writer import ManifestWriter
@@ -151,6 +151,7 @@ def run_simulation(config: dict, output_dir: Path):
     # Parse time parameters through strict UTC helpers
     strict = bool(config.get('data_validation', {}).get('strict', False))
     policy = resolve_layer_policy(config, strict=strict)
+    manifest_config = enabled_layer_config(config, policy.enabled_layers)
     from src.context.time_utils import parse_iso_utc
     start_time = parse_iso_utc(config['time']['start'], strict=strict)
     end_time   = parse_iso_utc(config['time']['end'],   strict=strict)
@@ -318,7 +319,7 @@ def run_simulation(config: dict, output_dir: Path):
                 timestamp_utc=frame.timestamp.isoformat(),
                 config=config,
                 data_snapshot_id=data_snapshot_id,
-                input_files=collect_input_file_paths(config, strict=strict),
+                input_files=collect_input_file_paths(manifest_config, strict=strict),
                 hash_files=True,
                 fallbacks_used=frame_fallbacks,
                 metadata=layer_policy_metadata(policy),

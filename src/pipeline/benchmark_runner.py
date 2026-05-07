@@ -34,7 +34,7 @@ from ..layers.l1_macro import L1MacroLayer
 from ..layers.l2_topo import L2TopoLayer
 from ..layers.l3_urban import L3UrbanLayer
 from ..pipeline.manifest_writer import ManifestWriter
-from ..planning import layer_policy_metadata, resolve_layer_policy
+from ..planning import enabled_layer_config, layer_policy_metadata, resolve_layer_policy
 from ..products.manifest import ProductManifest, collect_input_file_paths
 from ..products.projectors import export_dataset
 
@@ -98,6 +98,7 @@ class BenchmarkRunner:
         # Select satellite before building frame (canonical path)
         _strict = bool(self.config.get('data_validation', {}).get('strict', False))
         policy = resolve_layer_policy(self.config, strict=_strict, benchmark=True)
+        manifest_config = enabled_layer_config(self.config, policy.enabled_layers)
         sat_info = None
         if policy.is_enabled("l1_macro") and self.l1_layer is not None:
             from src.planning.satellite_selector import SatelliteSelector
@@ -193,7 +194,7 @@ class BenchmarkRunner:
             timestamp_utc=frame.timestamp.isoformat(),
             config=self.config,
             data_snapshot_id=self.data_snapshot_id,
-            input_files=collect_input_file_paths(self.config, strict=_strict),
+            input_files=collect_input_file_paths(manifest_config, strict=_strict),
             hash_files=True,
             fallbacks_used=frame_fallbacks,
             metadata=layer_policy_metadata(policy),

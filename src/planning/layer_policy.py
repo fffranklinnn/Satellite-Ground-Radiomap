@@ -5,6 +5,7 @@ Layer policy resolution for scene-adaptive execution.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
@@ -179,6 +180,61 @@ def configured_layer_overrides(config: Mapping[str, Any]) -> Dict[str, bool]:
     return overrides
 
 
+def required_input_availability(config: Mapping[str, Any]) -> Dict[str, bool]:
+    """Report availability for blocking inputs used by the runtime policy."""
+    layers = config.get("layers", {})
+    if not isinstance(layers, Mapping):
+        return {}
+
+    def _path_exists(path_value: Optional[str]) -> Optional[bool]:
+        if not path_value:
+            return None
+        return Path(str(path_value)).exists()
+
+    availability: Dict[str, bool] = {}
+
+    l1_cfg = layers.get("l1_macro", {})
+    if isinstance(l1_cfg, Mapping):
+        tle_cfg = l1_cfg.get("tle", {})
+        tle_path = None
+        if isinstance(tle_cfg, Mapping):
+            tle_path = tle_cfg.get("file")
+        availability_value = _path_exists(tle_path or l1_cfg.get("tle_file"))
+        if availability_value is not None:
+            availability["l1_macro"] = availability_value
+
+    l2_cfg = layers.get("l2_topo", {})
+    if isinstance(l2_cfg, Mapping):
+        availability_value = _path_exists(l2_cfg.get("dem_file"))
+        if availability_value is not None:
+            availability["l2_topo"] = availability_value
+
+    l3_cfg = layers.get("l3_urban", {})
+    if isinstance(l3_cfg, Mapping):
+        availability_value = _path_exists(
+            l3_cfg.get("tile_cache_root") or l3_cfg.get("data_dir") or l3_cfg.get("tiles_dir")
+        )
+        if availability_value is not None:
+            availability["l3_urban"] = availability_value
+
+    return availability
+
+
+def enabled_layer_config(config: Mapping[str, Any], enabled_layers: Sequence[str]) -> Dict[str, Any]:
+    """Return a shallow config copy containing only enabled layer configs."""
+    out = dict(config)
+    layers = config.get("layers", {})
+    if not isinstance(layers, Mapping):
+        return out
+
+    out["layers"] = {
+        layer_name: layers[layer_name]
+        for layer_name in enabled_layers
+        if layer_name in layers
+    }
+    return out
+
+
 def infer_scene_profile(config: Mapping[str, Any]) -> Optional[str]:
     """Infer a legacy scene profile from layer enablement when no explicit profile exists."""
     explicit_profile = LayerPolicyResolver._extract_scene_profile_static(config)
@@ -224,7 +280,7 @@ def resolve_layer_policy(
         strict=strict,
         benchmark=benchmark,
         user_overrides=overrides or None,
-        input_availability=input_availability,
+        input_availability=input_availability or required_input_availability(config),
     )
 
 

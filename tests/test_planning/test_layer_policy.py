@@ -8,6 +8,7 @@ from src.planning.layer_policy import (
     MissingRequiredInputError,
     MissingSceneProfileError,
     SUPPORTED_SCENE_PROFILES,
+    resolve_layer_policy,
     UnknownSceneProfileError,
 )
 
@@ -36,6 +37,17 @@ def test_from_config_preserves_scene_profile():
     policy = resolver.resolve()
     assert policy.scene_profile == "plain_sparse"
     assert policy.enabled_layers == ("l1_macro",)
+
+
+def test_non_strict_legacy_config_infers_scene_profile():
+    policy = resolve_layer_policy({"layers": {}})
+    assert policy.scene_profile == "suburban_mixed"
+    assert policy.enabled_layers == ("l1_macro", "l2_topo", "l3_urban")
+
+
+def test_strict_legacy_config_requires_explicit_profile():
+    with pytest.raises(MissingSceneProfileError):
+        resolve_layer_policy({"layers": {}}, strict=True)
 
 
 def test_deterministic_output_and_policy_version():

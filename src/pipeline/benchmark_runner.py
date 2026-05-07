@@ -34,6 +34,7 @@ from ..layers.l1_macro import L1MacroLayer
 from ..layers.l2_topo import L2TopoLayer
 from ..layers.l3_urban import L3UrbanLayer
 from ..pipeline.manifest_writer import ManifestWriter
+from ..planning import layer_policy_metadata, resolve_layer_policy
 from ..products.manifest import ProductManifest, collect_input_file_paths
 from ..products.projectors import export_dataset
 
@@ -96,8 +97,9 @@ class BenchmarkRunner:
         """
         # Select satellite before building frame (canonical path)
         _strict = bool(self.config.get('data_validation', {}).get('strict', False))
+        policy = resolve_layer_policy(self.config, strict=_strict, benchmark=True)
         sat_info = None
-        if self.l1_layer is not None:
+        if policy.is_enabled("l1_macro") and self.l1_layer is not None:
             from src.planning.satellite_selector import SatelliteSelector
             from pathlib import Path as _P
             tle_cfg = self.config.get('layers', {}).get('l1_macro', {}).get('tle', {})
@@ -117,19 +119,27 @@ class BenchmarkRunner:
 
         frame = self.frame_builder.build(timestamp, sat_info=sat_info)
 
-        if self.l1_layer is not None:
+        if policy.is_enabled("l1_macro") and self.l1_layer is not None:
             self.l1_layer.clear_fallbacks()
-        entry = self.l1_layer.propagate_entry(frame) if self.l1_layer else None
+        entry = (
+            self.l1_layer.propagate_entry(frame)
+            if policy.is_enabled("l1_macro") and self.l1_layer is not None
+            else None
+        )
         terrain = (
             self.l2_layer.propagate_terrain(frame, entry=entry)
-            if self.l2_layer else None
+            if policy.is_enabled("l2_topo") and self.l2_layer is not None else None
         )
         urban = (
             self.l3_layer.refine_urban(frame, entry=entry)
-            if self.l3_layer else None
+            if policy.is_enabled("l3_urban") and self.l3_layer is not None else None
         )
 
-        frame_fallbacks = list(self.l1_layer.fallbacks_used) if self.l1_layer is not None else []
+        frame_fallbacks = (
+            list(self.l1_layer.fallbacks_used)
+            if policy.is_enabled("l1_macro") and self.l1_layer is not None
+            else []
+        )
 
         # Use coverage.product_grid on canonical path, frame.grid on legacy path
         _cov = object.__getattribute__(frame, "coverage")
@@ -186,6 +196,7 @@ class BenchmarkRunner:
             input_files=collect_input_file_paths(self.config, strict=_strict),
             hash_files=True,
             fallbacks_used=frame_fallbacks,
+            metadata=layer_policy_metadata(policy),
             provenance=prov,
             benchmark_mode=bm,
         )

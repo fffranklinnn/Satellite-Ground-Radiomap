@@ -27,6 +27,7 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import require_utc
+from src.planning import layer_policy_metadata, resolve_layer_policy
 from src.products.manifest import ProductManifest, collect_input_file_paths
 from src.products.projectors import export_dataset
 from src.pipeline.manifest_writer import ManifestWriter
@@ -149,6 +150,7 @@ def run_simulation(config: dict, output_dir: Path):
 
     # Parse time parameters through strict UTC helpers
     strict = bool(config.get('data_validation', {}).get('strict', False))
+    policy = resolve_layer_policy(config, strict=strict)
     from src.context.time_utils import parse_iso_utc
     start_time = parse_iso_utc(config['time']['start'], strict=strict)
     end_time   = parse_iso_utc(config['time']['end'],   strict=strict)
@@ -161,8 +163,6 @@ def run_simulation(config: dict, output_dir: Path):
     # Build a data_snapshot_id from config hash for provenance tracking
     from src.products.manifest import _sha256_dict as _cfg_hash
     data_snapshot_id = config.get('data_validation', {}).get('snapshot_id', '')
-    input_file_paths = collect_input_file_paths(config)
-
     current_time = start_time
     frame_count  = 0
 
@@ -177,7 +177,7 @@ def run_simulation(config: dict, output_dir: Path):
 
         # Select satellite before building frame (canonical path)
         sat_info = None
-        if l1_layer is not None:
+        if policy.is_enabled('l1_macro') and l1_layer is not None:
             from src.planning.satellite_selector import SatelliteSelector
             tle_path = config['layers'].get('l1_macro', {}).get('tle', {})
             if isinstance(tle_path, dict):
@@ -199,16 +199,32 @@ def run_simulation(config: dict, output_dir: Path):
         frame = frame_builder.build(current_time, sat_info=sat_info)
 
         # Clear per-frame fallback accumulator before propagation
-        if l1_layer is not None:
+        if policy.is_enabled('l1_macro') and l1_layer is not None:
             l1_layer.clear_fallbacks()
 
         # Typed state propagation
-        entry   = l1_layer.propagate_entry(frame)   if l1_layer  else None
-        terrain = l2_layer.propagate_terrain(frame, entry=entry) if l2_layer else None
-        urban   = l3_layer.refine_urban(frame, entry=entry)      if l3_layer else None
+        entry = (
+            l1_layer.propagate_entry(frame)
+            if policy.is_enabled('l1_macro') and l1_layer is not None
+            else None
+        )
+        terrain = (
+            l2_layer.propagate_terrain(frame, entry=entry)
+            if policy.is_enabled('l2_topo') and l2_layer is not None
+            else None
+        )
+        urban = (
+            l3_layer.refine_urban(frame, entry=entry)
+            if policy.is_enabled('l3_urban') and l3_layer is not None
+            else None
+        )
 
         # Collect fallbacks recorded during this frame's propagation
-        frame_fallbacks = l1_layer.fallbacks_used if l1_layer is not None else []
+        frame_fallbacks = (
+            l1_layer.fallbacks_used
+            if policy.is_enabled('l1_macro') and l1_layer is not None
+            else []
+        )
 
         # Assemble composite map via projected composition (canonical path)
         # Use coverage.product_grid on canonical path, frame.grid on legacy path
@@ -305,6 +321,7 @@ def run_simulation(config: dict, output_dir: Path):
                 input_files=collect_input_file_paths(config, strict=strict),
                 hash_files=True,
                 fallbacks_used=frame_fallbacks,
+                metadata=layer_policy_metadata(policy),
                 provenance=_prov,
                 benchmark_mode=_bm,
             )

@@ -163,3 +163,77 @@ class LayerPolicyResolver:
             if profile is not None:
                 return str(profile)
         return ""
+
+
+def configured_layer_overrides(config: Mapping[str, Any]) -> Dict[str, bool]:
+    """Extract explicit layer enable flags from config as user overrides."""
+    layers = config.get("layers", {})
+    if not isinstance(layers, Mapping):
+        return {}
+
+    overrides: Dict[str, bool] = {}
+    for layer_name in CANONICAL_LAYER_ORDER:
+        layer_cfg = layers.get(layer_name, {})
+        if isinstance(layer_cfg, Mapping) and layer_cfg.get("enabled") is False:
+            overrides[layer_name] = False
+    return overrides
+
+
+def infer_scene_profile(config: Mapping[str, Any]) -> Optional[str]:
+    """Infer a legacy scene profile from layer enablement when no explicit profile exists."""
+    explicit_profile = LayerPolicyResolver._extract_scene_profile_static(config)
+    if explicit_profile:
+        return explicit_profile
+
+    layers = config.get("layers", {})
+    if not isinstance(layers, Mapping) or not layers:
+        enabled_layers = CANONICAL_LAYER_ORDER
+    else:
+        enabled_layers = tuple(
+            layer_name
+            for layer_name in CANONICAL_LAYER_ORDER
+            if not (isinstance(layers.get(layer_name), Mapping) and layers.get(layer_name, {}).get("enabled") is False)
+        )
+
+    for profile_name, default_layers in SUPPORTED_SCENE_PROFILES.items():
+        if tuple(default_layers) == tuple(enabled_layers):
+            return profile_name
+    return None
+
+
+def resolve_layer_policy(
+    config: Mapping[str, Any],
+    *,
+    strict: bool = False,
+    benchmark: bool = False,
+    input_availability: Optional[Mapping[str, bool]] = None,
+) -> LayerPolicy:
+    """Resolve layer policy from a runtime config dict."""
+    explicit_profile = LayerPolicyResolver._extract_scene_profile_static(config)
+    if explicit_profile:
+        scene_profile = explicit_profile
+    elif strict:
+        scene_profile = None
+    else:
+        scene_profile = infer_scene_profile(config)
+
+    resolver = LayerPolicyResolver.from_config(config)
+    overrides = configured_layer_overrides(config)
+    return resolver.resolve(
+        scene_profile=scene_profile,
+        strict=strict,
+        benchmark=benchmark,
+        user_overrides=overrides or None,
+        input_availability=input_availability,
+    )
+
+
+def layer_policy_metadata(policy: LayerPolicy) -> Dict[str, Any]:
+    """Serialize the resolved layer policy into manifest-friendly metadata."""
+    return {
+        "scene_profile": policy.scene_profile,
+        "enabled_layers": list(policy.enabled_layers),
+        "disabled_layers": policy.disabled_layers_dict(),
+        "layer_policy_version": policy.policy_version,
+        "layer_policy": policy.to_dict(),
+    }

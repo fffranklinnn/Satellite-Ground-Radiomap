@@ -312,6 +312,38 @@ def test_multisat_strict_paths_use_project_root(tmp_path, monkeypatch):
     assert paths["dem_file"] == str(dem_path)
 
 
+def test_multisat_strict_paths_use_nested_tle_file(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+
+    config = {
+        "scene": {"profile": "urban_flat"},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle": {"file": "data/starlink-2025-tle/2025-01-01.tle"}},
+            "l2_topo": {"enabled": False},
+            "l3_urban": {"enabled": False},
+        },
+    }
+
+    monkeypatch.chdir(tmp_path)
+    multisat_module.check_required_data(
+        project_root,
+        config,
+        allow_missing=False,
+        strict=True,
+        benchmark=False,
+    )
+    normalized = multisat_module.normalize_layer_paths(project_root, config)
+    paths = multisat_module.collect_input_file_paths(
+        multisat_module.enabled_layer_config(normalized, ("l1_macro",)),
+        strict=True,
+    )
+    assert paths["tle_file"] == str(tle_path)
+
+
 def test_multisat_manifest_records_shared_policy_metadata(tmp_path):
     config = {
         "scene": {"profile": "mountain_rural"},

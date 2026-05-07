@@ -54,7 +54,7 @@ def load_config(config_file: str) -> dict:
     return config
 
 
-def initialize_layers(config: dict):
+def initialize_layers(config: dict, policy=None):
     """
     Initialize physical layers based on configuration.
 
@@ -67,23 +67,25 @@ def initialize_layers(config: dict):
     origin_lat = config['origin']['latitude']
     origin_lon = config['origin']['longitude']
 
+    enabled_layers = set(policy.enabled_layers) if policy is not None else None
+
     # Initialize L1 Macro Layer
     l1_layer = None
-    if config['layers']['l1_macro']['enabled']:
+    if config['layers']['l1_macro']['enabled'] and (enabled_layers is None or 'l1_macro' in enabled_layers):
         l1_config = config['layers']['l1_macro']
         l1_layer = L1MacroLayer(l1_config, origin_lat, origin_lon)
         print(f"Initialized L1 Macro Layer: {l1_layer}")
 
     # Initialize L2 Terrain Layer
     l2_layer = None
-    if config['layers']['l2_topo']['enabled']:
+    if config['layers']['l2_topo']['enabled'] and (enabled_layers is None or 'l2_topo' in enabled_layers):
         l2_config = config['layers']['l2_topo']
         l2_layer = L2TopoLayer(l2_config, origin_lat, origin_lon)
         print(f"Initialized L2 Terrain Layer: {l2_layer}")
 
     # Initialize L3 Urban Layer
     l3_layer = None
-    if config['layers']['l3_urban']['enabled']:
+    if config['layers']['l3_urban']['enabled'] and (enabled_layers is None or 'l3_urban' in enabled_layers):
         l3_config = config['layers']['l3_urban']
         l3_layer = L3UrbanLayer(l3_config, origin_lat, origin_lon)
         print(f"Initialized L3 Urban Layer: {l3_layer}")
@@ -142,16 +144,16 @@ def run_simulation(config: dict, output_dir: Path):
     sim_logger = SimulationLogger()
     sim_logger.start_simulation(config)
 
-    # Initialize layers
-    l1_layer, l2_layer, l3_layer = initialize_layers(config)
-
-    # Build FrameBuilder (replaces bare origin_lat/lon + legacy aggregator)
-    frame_builder = build_frame_builder(config)
-
     # Parse time parameters through strict UTC helpers
     strict = bool(config.get('data_validation', {}).get('strict', False))
     policy = resolve_layer_policy(config, strict=strict)
     manifest_config = enabled_layer_config(config, policy.enabled_layers)
+
+    # Initialize layers only after policy is resolved
+    l1_layer, l2_layer, l3_layer = initialize_layers(config, policy=policy)
+
+    # Build FrameBuilder (replaces bare origin_lat/lon + legacy aggregator)
+    frame_builder = build_frame_builder(manifest_config)
     from src.context.time_utils import parse_iso_utc
     start_time = parse_iso_utc(config['time']['start'], strict=strict)
     end_time   = parse_iso_utc(config['time']['end'],   strict=strict)

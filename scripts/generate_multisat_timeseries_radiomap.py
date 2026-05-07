@@ -140,6 +140,14 @@ def normalize_layer_paths(project_root: Path, config: Dict[str, Any]) -> Dict[st
     return normalized
 
 
+def extract_l1_tle_path(l1_cfg: Dict[str, Any]) -> Optional[str]:
+    tle_cfg = l1_cfg.get("tle")
+    if isinstance(tle_cfg, dict) and tle_cfg.get("file"):
+        return str(tle_cfg.get("file"))
+    tle_file = l1_cfg.get("tle_file")
+    return str(tle_file) if tle_file else None
+
+
 def build_frame_builder_for_script(config: dict, origin_lat: float, origin_lon: float) -> FrameBuilder:
     """Build a FrameBuilder from config with real L1/L2/L3/product coverage geometry."""
     l1_cfg = config.get("layers", {}).get("l1_macro", {})
@@ -204,7 +212,7 @@ def check_required_data(project_root: Path,
     l3_cfg = layers_cfg.get("l3_urban", {})
 
     checks = [
-        ("TLE", resolve_path(project_root, l1_cfg.get("tle_file")), "l1_macro", True),
+        ("TLE", resolve_path(project_root, extract_l1_tle_path(l1_cfg)), "l1_macro", True),
         ("IONEX", resolve_path(project_root, l1_cfg.get("ionex_file")), "l1_macro", False),
         ("ERA5", resolve_path(project_root, l1_cfg.get("era5_file")), "l1_macro", False),
         ("DEM", resolve_path(project_root, l2_cfg.get("dem_file")), "l2_topo", True),

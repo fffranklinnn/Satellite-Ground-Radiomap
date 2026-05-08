@@ -108,6 +108,27 @@ def normalize_layer_paths(project_root: Path, config: dict) -> dict:
     return normalized
 
 
+def policy_layer_config(config: dict, enabled_layers) -> dict:
+    """Return a config copy with layer enabled flags aligned to policy."""
+    policy_config = dict(config)
+    layers = config.get('layers', {})
+    if not isinstance(layers, dict):
+        return policy_config
+
+    policy_layers = {}
+    enabled_set = set(enabled_layers)
+    for layer_name, layer_cfg in layers.items():
+        if not isinstance(layer_cfg, dict):
+            policy_layers[layer_name] = layer_cfg
+            continue
+        layer_copy = dict(layer_cfg)
+        layer_copy['enabled'] = layer_name in enabled_set
+        policy_layers[layer_name] = layer_copy
+
+    policy_config['layers'] = policy_layers
+    return policy_config
+
+
 def initialize_layers(config: dict, policy=None):
     """
     Initialize physical layers based on configuration.
@@ -159,8 +180,9 @@ def build_frame_builder(config: dict) -> FrameBuilder:
     grid_size = int(l1_cfg.get('grid_size', 256))
 
     l2_cfg = config['layers'].get('l2_topo', {})
-    l2_km = float(l2_cfg.get('coverage_km', 25.6))
-    l2_nx = int(l2_cfg.get('grid_size', 256))
+    l2_enabled = bool(l2_cfg.get('enabled', False))
+    l2_km = float(l2_cfg.get('coverage_km', 25.6)) if l2_enabled else None
+    l2_nx = int(l2_cfg.get('grid_size', 256)) if l2_enabled else None
 
     l3_cfg = config['layers'].get('l3_urban', {})
     l3_enabled = l3_cfg.get('enabled', False)
@@ -210,7 +232,7 @@ def run_simulation(config: dict, output_dir: Path, project_root: Path | None = N
     l1_layer, l2_layer, l3_layer = initialize_layers(normalized_config, policy=policy)
 
     # Build FrameBuilder (replaces bare origin_lat/lon + legacy aggregator)
-    frame_builder = build_frame_builder(normalized_config)
+    frame_builder = build_frame_builder(policy_layer_config(normalized_config, policy.enabled_layers))
     from src.context.time_utils import parse_iso_utc
     start_time = parse_iso_utc(config['time']['start'], strict=strict)
     end_time   = parse_iso_utc(config['time']['end'],   strict=strict)

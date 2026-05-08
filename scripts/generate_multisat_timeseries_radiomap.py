@@ -35,7 +35,7 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import parse_iso_utc  # shared strict UTC helper
-from src.planning import enabled_layer_config, layer_policy_metadata, resolve_layer_policy
+from src.planning import enabled_layer_config, infer_scene_profile, layer_policy_metadata, resolve_layer_policy
 from src.products.manifest import ProductManifest, collect_input_file_paths
 from src.products.projectors import export_dataset
 from src.pipeline.manifest_writer import ManifestWriter
@@ -286,11 +286,18 @@ def frame_stamp(ts: datetime) -> str:
 
 
 def resolve_multisat_policy(config: Dict[str, Any], strict: bool):
-    scene = config.get("scene", {})
-    has_explicit_scene = isinstance(scene, dict) and bool(scene.get("profile"))
-    policy_strict = bool(strict and has_explicit_scene)
-    policy = resolve_layer_policy(config, strict=policy_strict, benchmark=False)
-    return policy, policy_strict
+    policy_config = dict(config)
+    scene = policy_config.get("scene", {})
+    if not isinstance(scene, dict):
+        scene = {}
+    if not scene.get("profile"):
+        inferred = infer_scene_profile(policy_config)
+        if inferred:
+            scene = dict(scene)
+            scene["profile"] = inferred
+            policy_config["scene"] = scene
+    policy = resolve_layer_policy(policy_config, strict=strict, benchmark=False)
+    return policy, policy_config
 
 
 def compute_satellite_maps(
@@ -421,15 +428,14 @@ def main() -> None:
     config = load_config(config_path)
     strict = not args.allow_missing_data
     normalized_config = normalize_layer_paths(project_root, config)
-    policy, policy_strict = resolve_multisat_policy(normalized_config, strict)
+    policy, policy_config = resolve_multisat_policy(normalized_config, strict)
     manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
     check_required_data(
         project_root,
-        normalized_config,
+        policy_config,
         allow_missing=args.allow_missing_data,
         strict=strict,
         benchmark=False,
-        policy_strict=policy_strict,
     )
 
     layers_cfg = normalized_config["layers"]

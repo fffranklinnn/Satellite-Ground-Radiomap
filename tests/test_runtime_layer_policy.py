@@ -805,6 +805,21 @@ def test_multisat_allows_missing_scene_profile_in_normal_mode(tmp_path, monkeypa
     assert l1_ctor.call_count == 1
 
 
+def test_multisat_frame_builder_uses_policy_aligned_layer_config():
+    config = {
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "coverage_km": 256.0, "grid_size": 256},
+            "l2_topo": {"enabled": False, "coverage_km": 25.6, "grid_size": 256},
+            "l3_urban": {"enabled": True, "coverage_km": 0.256, "grid_size": 256},
+        },
+    }
+
+    frame_builder = multisat_module.build_frame_builder_for_script(config, ORIGIN_LAT, ORIGIN_LON)
+
+    assert frame_builder.coverage.l2_grid.width_m == frame_builder.coverage.l1_grid.width_m
+
+
 def test_multisat_strict_missing_input_without_scene_profile_raises(tmp_path, monkeypatch):
     project_root = tmp_path / "repo"
     tle_file = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"

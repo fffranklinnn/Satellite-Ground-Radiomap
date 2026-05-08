@@ -155,8 +155,9 @@ def build_frame_builder_for_script(config: dict, origin_lat: float, origin_lon: 
     grid_size = int(l1_cfg.get("grid_size", 256))
 
     l2_cfg = config.get("layers", {}).get("l2_topo", {})
-    l2_km = float(l2_cfg.get("coverage_km", 25.6))
-    l2_nx = int(l2_cfg.get("grid_size", 256))
+    l2_enabled = l2_cfg.get("enabled", False)
+    l2_km = float(l2_cfg.get("coverage_km", 25.6)) if l2_enabled else None
+    l2_nx = int(l2_cfg.get("grid_size", 256)) if l2_enabled else None
 
     l3_cfg = config.get("layers", {}).get("l3_urban", {})
     l3_enabled = l3_cfg.get("enabled", False)
@@ -298,6 +299,27 @@ def resolve_multisat_policy(config: Dict[str, Any], strict: bool):
             policy_config["scene"] = scene
     policy = resolve_layer_policy(policy_config, strict=strict, benchmark=False)
     return policy, policy_config
+
+
+def policy_layer_config(config: Dict[str, Any], enabled_layers: Tuple[str, ...]) -> Dict[str, Any]:
+    """Return a shallow config copy with layer enabled flags aligned to policy."""
+    policy_config = dict(config)
+    layers = config.get("layers", {})
+    if not isinstance(layers, dict):
+        return policy_config
+
+    enabled_set = set(enabled_layers)
+    policy_layers: Dict[str, Any] = {}
+    for layer_name, layer_cfg in layers.items():
+        if not isinstance(layer_cfg, dict):
+            policy_layers[layer_name] = layer_cfg
+            continue
+        layer_copy = dict(layer_cfg)
+        layer_copy["enabled"] = layer_name in enabled_set
+        policy_layers[layer_name] = layer_copy
+
+    policy_config["layers"] = policy_layers
+    return policy_config
 
 
 def compute_satellite_maps(
@@ -481,7 +503,11 @@ def main() -> None:
     l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon) if policy.is_enabled("l1_macro") else None
     l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon) if policy.is_enabled("l2_topo") else None
     l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon) if policy.is_enabled("l3_urban") else None
-    frame_builder = build_frame_builder_for_script(normalized_config, origin_lat, origin_lon)
+    frame_builder = build_frame_builder_for_script(
+        policy_layer_config(normalized_config, policy.enabled_layers),
+        origin_lat,
+        origin_lon,
+    )
     input_file_paths = collect_input_file_paths(manifest_config, strict=strict)
 
     if target_norad_ids and l1_layer is not None:

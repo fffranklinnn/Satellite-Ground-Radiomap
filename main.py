@@ -27,7 +27,7 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import require_utc
-from src.planning import enabled_layer_config, layer_policy_metadata, resolve_layer_policy
+from src.planning import enabled_layer_config, infer_scene_profile, layer_policy_metadata, resolve_layer_policy
 from src.products.manifest import ProductManifest, collect_input_file_paths
 from src.products.projectors import export_dataset
 from src.pipeline.manifest_writer import ManifestWriter
@@ -508,7 +508,15 @@ def main():
     project_root = _resolve_project_root()
     normalized_config = normalize_layer_paths(project_root, config)
     strict = strict_data
-    policy = resolve_layer_policy(normalized_config, strict=strict)
+    policy_config = dict(normalized_config)
+    if strict_data and not policy_config.get('scene', {}).get('profile'):
+        inferred_profile = infer_scene_profile(policy_config)
+        if inferred_profile:
+            scene_cfg = dict(policy_config.get('scene', {}))
+            scene_cfg['profile'] = inferred_profile
+            policy_config['scene'] = scene_cfg
+
+    policy = resolve_layer_policy(policy_config, strict=strict)
     validation_config = preflight_layer_config(normalized_config, policy)
 
     report = validate_data_integrity(config=validation_config, project_root=project_root, strict=strict_data)

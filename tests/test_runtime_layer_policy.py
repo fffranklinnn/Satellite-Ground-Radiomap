@@ -466,6 +466,53 @@ def test_main_cli_preflight_mirrors_missing_input_policy_disable(tmp_path):
     assert captured["config"]["layers"]["l3_urban"]["enabled"] is False
 
 
+def test_main_cli_strict_mode_infers_legacy_scene_profile(tmp_path):
+    tle_path = tmp_path / "tle.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    dem_path = tmp_path / "dem.tif"
+    dem_path.write_text("dem", encoding="utf-8")
+    tiles_dir = tmp_path / "tiles"
+    tiles_dir.mkdir()
+    config = {
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": str(tle_path)},
+            "l2_topo": {"enabled": True, "dem_file": str(dem_path)},
+            "l3_urban": {"enabled": True, "tile_cache_root": str(tiles_dir)},
+        },
+        "output": {"directory": str(tmp_path / "out")},
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+        "data_validation": {"strict": True},
+    }
+    fake_args = MagicMock(
+        config="unused.yaml",
+        output=None,
+        strict_data=True,
+        check_data_only=True,
+    )
+    captured = {}
+
+    def _validate(**kwargs):
+        captured.update(kwargs)
+        return {"errors": [], "warnings": [], "checks": [], "strict": kwargs["strict"]}
+
+    with patch.object(main_module.argparse.ArgumentParser, "parse_args", return_value=fake_args), \
+         patch.object(main_module, "load_config", return_value=config), \
+         patch.object(main_module, "resolve_layer_policy", wraps=main_module.resolve_layer_policy) as resolve_policy, \
+         patch.object(main_module, "validate_data_integrity", side_effect=_validate), \
+         patch.object(main_module, "format_data_validation_report", return_value="ok"):
+        with pytest.raises(SystemExit) as exc:
+            main_module.main()
+
+    assert exc.value.code == 0
+    assert resolve_policy.call_args.args[0]["scene"]["profile"] == "suburban_mixed"
+    assert captured["strict"] is True
+
+
 def test_benchmark_runner_strict_paths_use_project_root(tmp_path, monkeypatch):
     project_root = tmp_path / "repo"
     (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)

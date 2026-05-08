@@ -210,7 +210,7 @@ def run_simulation(config: dict, output_dir: Path, project_root: Path | None = N
     l1_layer, l2_layer, l3_layer = initialize_layers(normalized_config, policy=policy)
 
     # Build FrameBuilder (replaces bare origin_lat/lon + legacy aggregator)
-    frame_builder = build_frame_builder(manifest_config)
+    frame_builder = build_frame_builder(normalized_config)
     from src.context.time_utils import parse_iso_utc
     start_time = parse_iso_utc(config['time']['start'], strict=strict)
     end_time   = parse_iso_utc(config['time']['end'],   strict=strict)

@@ -298,6 +298,54 @@ def test_main_run_simulation_hashes_original_config(tmp_path):
     assert kwargs["config"]["layers"]["l1_macro"]["tle_file"] == "data/starlink-2025-tle/2025-01-01.tle"
 
 
+def test_main_run_simulation_preserves_l1_geometry_when_l1_disabled(tmp_path):
+    config = {
+        "scene": {"profile": "plain_sparse"},
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {
+                "enabled": True,
+                "coverage_km": 512.0,
+                "grid_size": 128,
+            },
+            "l2_topo": {"enabled": False},
+            "l3_urban": {"enabled": False},
+        },
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+        "logging": {"level": "INFO"},
+        "output": {"save_individual_layers": False, "save_composite": True, "dpi": 72},
+        "performance": {"enable_profiling": False},
+        "data_validation": {"strict": False, "snapshot_id": "snap_001"},
+    }
+    l1, l2, l3 = _mock_layers()
+    fake_logger = MagicMock()
+    fake_sim_logger = MagicMock()
+    fake_fb = MagicMock(build=MagicMock(return_value=FRAME))
+    fake_manifest = MagicMock(metadata={})
+
+    with patch.object(main_module, "setup_logger", return_value=fake_logger), \
+         patch.object(main_module, "SimulationLogger", return_value=fake_sim_logger), \
+         patch.object(main_module, "initialize_layers", return_value=(l1, l2, l3)), \
+         patch.object(main_module, "build_frame_builder", return_value=fake_fb) as build_fb, \
+         patch.object(main_module, "collect_input_file_paths", return_value={}), \
+         patch.object(main_module, "export_dataset", return_value=({"path_loss_map": str(tmp_path / "out.npy")}, None)), \
+         patch.object(main_module, "plot_radio_map"), \
+         patch.object(main_module, "plot_layer_comparison"), \
+         patch.object(main_module, "ProductManifest") as manifest_cls, \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((8, 8), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)):
+        manifest_cls.build.return_value = fake_manifest
+        main_module.run_simulation(config, tmp_path)
+
+    build_config = build_fb.call_args.args[0]
+    assert build_config["layers"]["l1_macro"]["coverage_km"] == 512.0
+    assert build_config["layers"]["l1_macro"]["grid_size"] == 128
+
+
 def test_benchmark_runner_strict_paths_use_project_root(tmp_path, monkeypatch):
     project_root = tmp_path / "repo"
     (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)

@@ -226,7 +226,7 @@ def check_required_data(project_root: Path,
 
     missing_required: List[str] = []
     for label, path_obj, layer_name, required in checks:
-        if layer_name not in enabled:
+        if layer_name not in enabled and label != "TLE":
             continue
         if path_obj is None:
             if required:

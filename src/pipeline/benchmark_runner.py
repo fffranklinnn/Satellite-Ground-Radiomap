@@ -148,7 +148,11 @@ class BenchmarkRunner:
         normalized_config = self._normalize_layer_paths(self.config)
         _strict = bool(normalized_config.get('data_validation', {}).get('strict', False))
         policy_config = dict(normalized_config)
-        if _strict and not policy_config.get("scene", {}).get("profile"):
+        layers_cfg = policy_config.get("layers", {})
+        has_complete_legacy_layer_blocks = isinstance(layers_cfg, dict) and all(
+            layer_name in layers_cfg for layer_name in ("l1_macro", "l2_topo", "l3_urban")
+        )
+        if _strict and not policy_config.get("scene", {}).get("profile") and has_complete_legacy_layer_blocks:
             inferred_profile = infer_scene_profile(policy_config)
             if inferred_profile:
                 scene_cfg = dict(policy_config.get("scene", {}))

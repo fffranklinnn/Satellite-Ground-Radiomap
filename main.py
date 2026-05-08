@@ -229,7 +229,7 @@ def build_frame_builder(config: dict) -> FrameBuilder:
     return FrameBuilder(grid=grid, coverage=coverage)
 
 
-def run_simulation(config: dict, output_dir: Path, project_root: Path | None = None):
+def run_simulation(config: dict, output_dir: Path, project_root: Path | None = None, strict_data: bool | None = None):
     """
     Run the main simulation loop using the FrameBuilder pipeline.
 
@@ -249,7 +249,7 @@ def run_simulation(config: dict, output_dir: Path, project_root: Path | None = N
     project_root = _resolve_project_root(project_root)
     normalized_config = normalize_layer_paths(project_root, config)
 
-    strict = bool(normalized_config.get('data_validation', {}).get('strict', False))
+    strict = bool(strict_data if strict_data is not None else normalized_config.get('data_validation', {}).get('strict', False))
     policy = resolve_layer_policy(normalized_config, strict=strict)
     manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
 
@@ -543,7 +543,7 @@ def main():
 
     # Run simulation
     try:
-        run_simulation(config, output_dir, project_root=project_root)
+        run_simulation(config, output_dir, project_root=project_root, strict_data=strict_data)
     except KeyboardInterrupt:
         print("\n\nSimulation interrupted by user.")
         sys.exit(1)

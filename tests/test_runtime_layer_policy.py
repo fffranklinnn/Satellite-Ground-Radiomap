@@ -12,7 +12,7 @@ import main as main_module
 from src.context.frame_context import FrameContext
 from src.context.grid_spec import GridSpec
 from src.pipeline.benchmark_runner import BenchmarkRunner
-from src.planning import MissingRequiredInputError, resolve_layer_policy
+from src.planning import MissingRequiredInputError, MissingSceneProfileError, infer_scene_profile, resolve_layer_policy
 from src.planning import enabled_layer_config
 from src.products.manifest import collect_input_file_paths
 
@@ -513,6 +513,44 @@ def test_main_cli_strict_mode_infers_legacy_scene_profile(tmp_path):
     assert captured["strict"] is True
 
 
+def test_main_cli_strict_mode_propagates_to_simulation(tmp_path):
+    tle_path = tmp_path / "tle.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    config = {
+        "scene": {"profile": "mountain_rural"},
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": str(tle_path)},
+            "l2_topo": {"enabled": True, "dem_file": str(tmp_path / "dem.tif")},
+            "l3_urban": {"enabled": True, "tile_cache_root": str(tmp_path / "tiles")},
+        },
+        "output": {"directory": str(tmp_path / "out")},
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+        "data_validation": {"strict": False},
+    }
+    fake_args = MagicMock(
+        config="unused.yaml",
+        output=None,
+        strict_data=True,
+        check_data_only=False,
+    )
+    fake_policy = MagicMock(enabled_layers=("l1_macro", "l2_topo", "l3_urban"), disabled_layers=())
+
+    with patch.object(main_module.argparse.ArgumentParser, "parse_args", return_value=fake_args), \
+         patch.object(main_module, "load_config", return_value=config), \
+         patch.object(main_module, "validate_data_integrity", return_value={"errors": [], "warnings": [], "checks": []}), \
+         patch.object(main_module, "format_data_validation_report", return_value="ok"), \
+         patch.object(main_module, "resolve_layer_policy", return_value=fake_policy), \
+         patch.object(main_module, "run_simulation") as run_sim:
+        main_module.main()
+
+    assert run_sim.call_args.kwargs["strict_data"] is True
+
+
 def test_tle_file_fallback_is_normalized_even_with_empty_tle_mapping(tmp_path):
     project_root = tmp_path / "repo"
     tle_file = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
@@ -698,6 +736,36 @@ def test_benchmark_runner_strict_mode_infers_legacy_scene_profile(tmp_path):
         runner.run_frame(TS, tmp_path, ["path_loss_map"])
 
     assert resolve_policy.call_args.args[0]["scene"]["profile"] == "suburban_mixed"
+
+
+def test_benchmark_runner_strict_mode_rejects_partial_legacy_layers(tmp_path):
+    tle_path = tmp_path / "tle.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+
+    config = {
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": str(tle_path)},
+        },
+        "data_validation": {"strict": True},
+    }
+
+    l1, l2, l3 = _mock_layers()
+    runner = BenchmarkRunner(
+        frame_builder=MagicMock(build=MagicMock(return_value=FRAME)),
+        l1_layer=l1,
+        l2_layer=l2,
+        l3_layer=l3,
+        config=config,
+        data_snapshot_id="snap_001",
+    )
+
+    with patch("src.planning.satellite_selector.SatelliteSelector"), \
+         patch("src.pipeline.benchmark_runner.infer_scene_profile", wraps=infer_scene_profile) as infer_profile:
+        with pytest.raises(MissingSceneProfileError):
+            runner.run_frame(TS, tmp_path, ["path_loss_map"])
+
+    infer_profile.assert_not_called()
 
 
 def test_multisat_compute_satellite_maps_respects_policy_disabled_layers():
@@ -1336,6 +1404,26 @@ def test_multisat_strict_paths_use_nested_tle_file(tmp_path, monkeypatch):
         strict=True,
     )
     assert paths["tle_file"] == str(tle_path)
+
+
+def test_multisat_requires_tle_even_when_l1_disabled(tmp_path):
+    config = {
+        "scene": {"profile": "plain_sparse"},
+        "layers": {
+            "l1_macro": {"enabled": False},
+            "l2_topo": {"enabled": False},
+            "l3_urban": {"enabled": False},
+        },
+    }
+
+    with pytest.raises(FileNotFoundError):
+        multisat_module.check_required_data(
+            tmp_path,
+            config,
+            allow_missing=False,
+            strict=True,
+            benchmark=False,
+        )
 
 
 def test_multisat_manifest_records_shared_policy_metadata(tmp_path):

@@ -458,13 +458,13 @@ def main() -> None:
         out_root = project_root / out_root
     out_dirs = make_output_dirs(out_root)
 
-    l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
+    l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon) if policy.is_enabled("l1_macro") else None
     l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon) if policy.is_enabled("l2_topo") else None
     l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon) if policy.is_enabled("l3_urban") else None
     frame_builder = build_frame_builder_for_script(normalized_config, origin_lat, origin_lon)
     input_file_paths = collect_input_file_paths(manifest_config, strict=strict)
 
-    if target_norad_ids:
+    if target_norad_ids and l1_layer is not None:
         l1_layer.target_norad_ids = target_norad_ids
 
     try:
@@ -483,28 +483,31 @@ def main() -> None:
         print("=" * 88)
 
         # Precompute visible-satellite plan for predictable progress reporting.
-        visible_plan: List[List[Dict[str, float]]] = []
-        pre_t0 = time.time()
-        visible_accum = 0
-        for idx, ts in enumerate(timestamps, start=1):
-            visible = l1_layer.get_visible_satellites(
-                origin_lat=origin_lat,
-                origin_lon=origin_lon,
-                timestamp=ts,
-                min_elevation_deg=args.min_elevation_deg,
-                target_norad_ids=target_norad_ids,
-                max_count=args.max_satellites,
-            )
-            visible_plan.append(visible)
-            visible_accum += len(visible)
-            if idx == 1 or idx % 10 == 0 or idx == total_frames:
-                elapsed = time.time() - pre_t0
-                rate = idx / max(elapsed, 1e-6)
-                print(
-                    f"[prepass] {idx}/{total_frames} frames | "
-                    f"avg_visible={visible_accum / idx:.2f} | "
-                    f"rate={rate:.2f}/s"
+        if l1_layer is not None:
+            visible_plan = []
+            pre_t0 = time.time()
+            visible_accum = 0
+            for idx, ts in enumerate(timestamps, start=1):
+                visible = l1_layer.get_visible_satellites(
+                    origin_lat=origin_lat,
+                    origin_lon=origin_lon,
+                    timestamp=ts,
+                    min_elevation_deg=args.min_elevation_deg,
+                    target_norad_ids=target_norad_ids,
+                    max_count=args.max_satellites,
                 )
+                visible_plan.append(visible)
+                visible_accum += len(visible)
+                if idx == 1 or idx % 10 == 0 or idx == total_frames:
+                    elapsed = time.time() - pre_t0
+                    rate = idx / max(elapsed, 1e-6)
+                    print(
+                        f"[prepass] {idx}/{total_frames} frames | "
+                        f"avg_visible={visible_accum / idx:.2f} | "
+                        f"rate={rate:.2f}/s"
+                    )
+        else:
+            visible_plan = [[] for _ in timestamps]
 
         total_sat_tasks = int(sum(len(v) for v in visible_plan))
         done_sat_tasks = 0
@@ -531,10 +534,16 @@ def main() -> None:
                 sat_frames: List[Any] = []  # store pre-bound FrameContext per satellite
                 sat_errors: List[Dict[str, Any]] = []
                 status = "ok"
-                l1_layer.clear_fallbacks()
+                if l1_layer is not None:
+                    l1_layer.clear_fallbacks()
 
                 target_size = frame_builder.grid.nx
-                default_l1 = np.full((target_size, target_size), l1_layer.NO_COVERAGE_LOSS_DB, dtype=np.float32)
+                default_l1_value = (
+                    l1_layer.NO_COVERAGE_LOSS_DB
+                    if l1_layer is not None
+                    else float(getattr(L1MacroLayer, "NO_COVERAGE_LOSS_DB", 300.0))
+                )
+                default_l1 = np.full((target_size, target_size), default_l1_value, dtype=np.float32)
                 l1_fused = default_l1.copy()
                 l2_fused = np.zeros((target_size, target_size), dtype=np.float32)
                 l3_fused = np.zeros((target_size, target_size), dtype=np.float32)
@@ -661,7 +670,7 @@ def main() -> None:
                     data_snapshot_id=config.get("data_validation", {}).get("snapshot_id", ""),
                     input_files=input_file_paths,
                     hash_files=True,
-                    fallbacks_used=l1_layer.fallbacks_used,
+                fallbacks_used=l1_layer.fallbacks_used if l1_layer is not None else [],
                     metadata=layer_policy_metadata(policy),
                 )
                 # Reuse the first satellite's pre-bound frame for export

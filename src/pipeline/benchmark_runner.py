@@ -242,7 +242,7 @@ class BenchmarkRunner:
         manifest = ProductManifest.build(
             frame_id=frame.frame_id,
             timestamp_utc=frame.timestamp.isoformat(),
-            config=normalized_config,
+            config=self.config,
             data_snapshot_id=self.data_snapshot_id,
             input_files=collect_input_file_paths(manifest_config, strict=_strict),
             hash_files=True,

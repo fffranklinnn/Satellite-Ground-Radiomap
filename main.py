@@ -376,8 +376,8 @@ def run_simulation(config: dict, output_dir: Path, project_root: Path | None = N
             frame_manifest = ProductManifest.build(
                 frame_id=frame.frame_id,
                 timestamp_utc=frame.timestamp.isoformat(),
-                config=normalized_config,
-                data_snapshot_id=normalized_config.get('data_validation', {}).get('snapshot_id', ''),
+                config=config,
+                data_snapshot_id=config.get('data_validation', {}).get('snapshot_id', ''),
                 input_files=collect_input_file_paths(manifest_config, strict=strict),
                 hash_files=True,
                 fallbacks_used=frame_fallbacks,

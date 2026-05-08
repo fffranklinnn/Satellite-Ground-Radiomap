@@ -248,6 +248,56 @@ def test_main_run_simulation_skips_disabled_constructor(tmp_path, monkeypatch):
     assert l1_layer.propagate_entry.call_count == 1
 
 
+def test_main_run_simulation_hashes_original_config(tmp_path):
+    project_root = tmp_path / "repo"
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+
+    config = {
+        "scene": {"profile": "urban_flat"},
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": "data/starlink-2025-tle/2025-01-01.tle"},
+            "l2_topo": {"enabled": False},
+            "l3_urban": {"enabled": False},
+        },
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+        "logging": {"level": "INFO"},
+        "output": {"save_individual_layers": False, "save_composite": True, "dpi": 72},
+        "performance": {"enable_profiling": False},
+        "data_validation": {"strict": False, "snapshot_id": "snap_001"},
+    }
+
+    l1, l2, l3 = _mock_layers()
+    fake_logger = MagicMock()
+    fake_sim_logger = MagicMock()
+    fake_fb = MagicMock(build=MagicMock(return_value=FRAME))
+    fake_manifest = MagicMock(metadata={})
+
+    with patch.object(main_module, "setup_logger", return_value=fake_logger), \
+         patch.object(main_module, "SimulationLogger", return_value=fake_sim_logger), \
+         patch.object(main_module, "initialize_layers", return_value=(l1, l2, l3)), \
+         patch.object(main_module, "build_frame_builder", return_value=fake_fb), \
+         patch.object(main_module, "collect_input_file_paths", return_value={}), \
+         patch.object(main_module, "export_dataset", return_value=({"path_loss_map": str(tmp_path / "out.npy")}, None)), \
+         patch.object(main_module, "plot_radio_map"), \
+         patch.object(main_module, "plot_layer_comparison"), \
+         patch.object(main_module, "ProductManifest") as manifest_cls, \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((8, 8), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)):
+        manifest_cls.build.return_value = fake_manifest
+        main_module.run_simulation(config, tmp_path, project_root=project_root)
+
+    _, kwargs = manifest_cls.build.call_args
+    assert kwargs["config"] == config
+    assert kwargs["config"]["layers"]["l1_macro"]["tle_file"] == "data/starlink-2025-tle/2025-01-01.tle"
+
+
 def test_benchmark_runner_strict_paths_use_project_root(tmp_path, monkeypatch):
     project_root = tmp_path / "repo"
     (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
@@ -291,6 +341,48 @@ def test_benchmark_runner_strict_paths_use_project_root(tmp_path, monkeypatch):
     assert input_paths.called
     assert manifest.input_file_hashes["tle_file"]
     assert manifest.input_file_hashes["dem_file"]
+
+
+def test_benchmark_runner_hashes_original_config(tmp_path):
+    project_root = tmp_path / "repo"
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+
+    config = {
+        "scene": {"profile": "urban_flat"},
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": "data/starlink-2025-tle/2025-01-01.tle"},
+            "l2_topo": {"enabled": False},
+            "l3_urban": {"enabled": False},
+        },
+        "data_validation": {"strict": False},
+    }
+
+    l1, l2, l3 = _mock_layers()
+    runner = BenchmarkRunner(
+        frame_builder=MagicMock(build=MagicMock(return_value=FRAME)),
+        l1_layer=l1,
+        l2_layer=l2,
+        l3_layer=l3,
+        config=config,
+        data_snapshot_id="snap_001",
+        project_root=project_root,
+    )
+
+    fake_manifest = MagicMock(metadata={})
+    with patch("src.pipeline.benchmark_runner.export_dataset", return_value=({"path_loss_map": str(tmp_path / "out.npy")}, None)), \
+         patch("src.pipeline.benchmark_runner.collect_input_file_paths", return_value={}), \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((8, 8), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)), \
+         patch("src.pipeline.benchmark_runner.ProductManifest") as manifest_cls:
+        manifest_cls.build.return_value = fake_manifest
+        runner.run_frame(TS, tmp_path, ["path_loss_map"])
+
+    _, kwargs = manifest_cls.build.call_args
+    assert kwargs["config"] == config
+    assert kwargs["config"]["layers"]["l1_macro"]["tle_file"] == "data/starlink-2025-tle/2025-01-01.tle"
 
 
 def test_benchmark_runner_strict_missing_input_raises(tmp_path):
@@ -382,6 +474,76 @@ def test_multisat_check_required_data_ignores_scene_disabled_inputs(tmp_path):
         strict=False,
         benchmark=False,
     )
+
+
+def test_multisat_skips_l1_construction_when_policy_disables_it(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    config = {
+        "scene": {"profile": "plain_sparse"},
+        "origin": {"latitude": 34.0, "longitude": 108.0},
+        "layers": {
+            "l1_macro": {"enabled": False, "tle_file": "data/starlink-2025-tle/2025-01-01.tle"},
+            "l2_topo": {"enabled": False, "dem_file": "data/dem.tif"},
+            "l3_urban": {"enabled": False},
+        },
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+    }
+
+    fake_args = MagicMock(
+        config="unused.yaml",
+        start=None,
+        end=None,
+        step_minutes=None,
+        max_frames=None,
+        origin_lat=None,
+        origin_lon=None,
+        fusion_mode="best-server",
+        max_satellites=8,
+        min_elevation_deg=None,
+        soft_min_power=1e-30,
+        norad_id=None,
+        output_dir=str(project_root / "output"),
+        output_prefix="multisat_ts",
+        dpi=180,
+        cmap="viridis",
+        allow_missing_data=True,
+    )
+
+    fake_fb = MagicMock(grid=GRID, build=MagicMock(return_value=FRAME))
+    fake_writer = MagicMock()
+    fake_writer.__enter__ = MagicMock(return_value=fake_writer)
+    fake_writer.__exit__ = MagicMock(return_value=False)
+
+    (project_root / "output" / "png").mkdir(parents=True)
+    (project_root / "output" / "npy").mkdir(parents=True)
+    (project_root / "output" / "frame_json").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    with patch.object(multisat_module, "parse_args", return_value=fake_args), \
+         patch.object(multisat_module, "load_config", return_value=config), \
+         patch.object(multisat_module, "L1MacroLayer") as l1_ctor, \
+         patch.object(multisat_module, "L2TopoLayer", return_value=MagicMock()) as l2_ctor, \
+         patch.object(multisat_module, "L3UrbanLayer", return_value=MagicMock()) as l3_ctor, \
+         patch.object(multisat_module, "build_frame_builder_for_script", return_value=fake_fb), \
+         patch.object(multisat_module, "make_output_dirs", return_value={
+             "root": project_root / "output",
+             "png": project_root / "output" / "png",
+             "npy": project_root / "output" / "npy",
+             "json": project_root / "output" / "frame_json",
+             "manifest": project_root / "output" / "manifest.jsonl",
+         }), \
+         patch.object(multisat_module, "ManifestWriter", return_value=fake_writer), \
+         patch.object(multisat_module, "plot_radio_map"), \
+         patch.object(multisat_module, "export_dataset", return_value=({"path_loss_map": str(project_root / "output" / "npy" / "frame.npy")}, None)):
+        multisat_module.main()
+
+    assert l1_ctor.call_count == 0
+    assert l2_ctor.call_count == 0
+    assert l3_ctor.call_count == 0
 
 
 def test_multisat_strict_paths_use_project_root(tmp_path, monkeypatch):

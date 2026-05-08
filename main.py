@@ -495,6 +495,10 @@ def main():
     # Load configuration
     print(f"Loading configuration from: {args.config}")
     config = load_config(args.config)
+    configured_layers = config.get('layers', {})
+    has_complete_legacy_layer_blocks = isinstance(configured_layers, dict) and all(
+        layer_name in configured_layers for layer_name in ('l1_macro', 'l2_topo', 'l3_urban')
+    )
 
     # Data integrity checks
     strict_from_cfg = bool(config.get('data_validation', {}).get('strict', False))
@@ -508,7 +512,7 @@ def main():
     normalized_config = normalize_layer_paths(project_root, config)
     strict = strict_data
     policy_config = dict(normalized_config)
-    if strict_data and not policy_config.get('scene', {}).get('profile'):
+    if strict_data and not policy_config.get('scene', {}).get('profile') and has_complete_legacy_layer_blocks:
         inferred_profile = infer_scene_profile(policy_config)
         if inferred_profile:
             scene_cfg = dict(policy_config.get('scene', {}))

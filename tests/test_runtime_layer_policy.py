@@ -918,6 +918,85 @@ def test_multisat_keeps_l1_construction_for_satellite_enumeration(tmp_path, monk
     assert l3_ctor.call_count == 0
 
 
+def test_multisat_manifest_keeps_l1_inputs_when_policy_disables_l1(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    config = {
+        "scene": {"profile": "plain_sparse"},
+        "origin": {"latitude": 34.0, "longitude": 108.0},
+        "layers": {
+            "l1_macro": {"enabled": False, "tle_file": str(tle_path)},
+            "l2_topo": {"enabled": False},
+            "l3_urban": {"enabled": False},
+        },
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+    }
+
+    fake_args = MagicMock(
+        config="unused.yaml",
+        start=None,
+        end=None,
+        step_minutes=None,
+        max_frames=None,
+        origin_lat=None,
+        origin_lon=None,
+        fusion_mode="best-server",
+        max_satellites=8,
+        min_elevation_deg=None,
+        soft_min_power=1e-30,
+        norad_id=None,
+        output_dir=str(project_root / "output"),
+        output_prefix="multisat_ts",
+        dpi=180,
+        cmap="viridis",
+        allow_missing_data=True,
+    )
+
+    fake_fb = MagicMock(grid=GRID, build=MagicMock(return_value=FRAME))
+    fake_l1 = MagicMock()
+    fake_l1.NO_COVERAGE_LOSS_DB = 300.0
+    fake_l1.get_visible_satellites.return_value = []
+    fake_l1.clear_fallbacks = MagicMock()
+    fake_l1.fallbacks_used = []
+    fake_writer = MagicMock()
+    fake_writer.__enter__ = MagicMock(return_value=fake_writer)
+    fake_writer.__exit__ = MagicMock(return_value=False)
+
+    (project_root / "output" / "png").mkdir(parents=True)
+    (project_root / "output" / "npy").mkdir(parents=True)
+    (project_root / "output" / "frame_json").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    with patch.object(multisat_module, "parse_args", return_value=fake_args), \
+         patch.object(multisat_module, "load_config", return_value=config), \
+         patch.object(multisat_module, "L1MacroLayer", return_value=fake_l1), \
+         patch.object(multisat_module, "L2TopoLayer", return_value=MagicMock()), \
+         patch.object(multisat_module, "L3UrbanLayer", return_value=MagicMock()), \
+         patch.object(multisat_module, "build_frame_builder_for_script", return_value=fake_fb), \
+         patch.object(multisat_module, "make_output_dirs", return_value={
+             "root": project_root / "output",
+             "png": project_root / "output" / "png",
+             "npy": project_root / "output" / "npy",
+             "json": project_root / "output" / "frame_json",
+             "manifest": project_root / "output" / "manifest.jsonl",
+         }), \
+         patch.object(multisat_module, "ManifestWriter", return_value=fake_writer), \
+         patch.object(multisat_module, "plot_radio_map"), \
+         patch.object(multisat_module, "export_dataset", return_value=({"path_loss_map": str(project_root / "output" / "npy" / "frame.npy")}, None)), \
+         patch.object(multisat_module, "collect_input_file_paths", wraps=collect_input_file_paths) as collect_paths:
+        multisat_module.main()
+
+    manifest_layers = collect_paths.call_args.args[0]["layers"]
+    assert "l1_macro" in manifest_layers
+    assert manifest_layers["l1_macro"]["tle_file"] == str(tle_path)
+
+
 def test_multisat_allows_missing_scene_profile_in_normal_mode(tmp_path, monkeypatch):
     project_root = tmp_path / "repo"
     tle_file = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
@@ -1281,3 +1360,29 @@ def test_multisat_manifest_records_shared_policy_metadata(tmp_path):
     assert manifest.metadata["scene_profile"] == "mountain_rural"
     assert manifest.metadata["enabled_layers"] == ("l1_macro", "l2_topo")
     assert manifest.metadata["disabled_layers"]["l3_urban"]["reason_type"] == "scene_policy"
+
+
+def test_main_strict_mode_skips_legacy_inference_when_layer_blocks_are_omitted(monkeypatch):
+    config = {
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": "data/starlink-2025-tle/2025-01-01.tle"},
+        },
+        "output": {"directory": "output"},
+        "data_validation": {"strict": True},
+    }
+
+    monkeypatch.setattr(main_module.sys, "argv", ["main.py", "--config", "unused.yaml", "--strict-data"])
+    fake_policy = MagicMock(enabled_layers=("l1_macro",), disabled_layers=())
+
+    with patch.object(main_module, "load_config", return_value=config), \
+         patch.object(main_module, "validate_data_integrity", return_value={"errors": [], "warnings": [], "checks": []}), \
+         patch.object(main_module, "format_data_validation_report", return_value="[data-check] clean"), \
+         patch.object(main_module, "resolve_layer_policy", return_value=fake_policy) as resolve_policy, \
+         patch.object(main_module, "run_simulation") as run_simulation, \
+         patch.object(main_module, "infer_scene_profile", wraps=main_module.infer_scene_profile) as infer_profile:
+        main_module.main()
+
+    infer_profile.assert_not_called()
+    resolve_policy.assert_called_once()
+    assert resolve_policy.call_args.args[0].get("scene", {}).get("profile") is None
+    run_simulation.assert_called_once()

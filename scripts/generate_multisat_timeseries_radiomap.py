@@ -464,7 +464,10 @@ def main() -> None:
     strict = not args.allow_missing_data
     normalized_config = normalize_layer_paths(project_root, config)
     policy, policy_config = resolve_multisat_policy(normalized_config, strict)
-    manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
+    manifest_enabled_layers = tuple(
+        dict.fromkeys(("l1_macro", *policy.enabled_layers))
+    )
+    manifest_config = enabled_layer_config(normalized_config, manifest_enabled_layers)
     check_required_data(
         project_root,
         policy_config,

@@ -513,7 +513,9 @@ def main() -> None:
         out_root = project_root / out_root
     out_dirs = make_output_dirs(out_root)
 
-    l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon) if policy.is_enabled("l1_macro") else None
+    # L1 drives satellite enumeration for this generator, so keep it available even
+    # when policy disables it for propagation.
+    l1_layer = L1MacroLayer(l1_cfg, origin_lat, origin_lon)
     l2_layer = L2TopoLayer(l2_cfg, origin_lat, origin_lon) if policy.is_enabled("l2_topo") else None
     l3_layer = L3UrbanLayer(l3_cfg, origin_lat, origin_lon) if policy.is_enabled("l3_urban") else None
     frame_builder = build_frame_builder_for_script(

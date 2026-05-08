@@ -765,7 +765,7 @@ def test_multisat_check_required_data_ignores_scene_disabled_inputs(tmp_path):
     )
 
 
-def test_multisat_skips_l1_construction_when_policy_disables_it(tmp_path, monkeypatch):
+def test_multisat_keeps_l1_construction_when_policy_disables_it(tmp_path, monkeypatch):
     project_root = tmp_path / "repo"
     config = {
         "scene": {"profile": "plain_sparse"},
@@ -803,6 +803,11 @@ def test_multisat_skips_l1_construction_when_policy_disables_it(tmp_path, monkey
     )
 
     fake_fb = MagicMock(grid=GRID, build=MagicMock(return_value=FRAME))
+    fake_l1 = MagicMock()
+    fake_l1.NO_COVERAGE_LOSS_DB = 300.0
+    fake_l1.get_visible_satellites.return_value = []
+    fake_l1.clear_fallbacks = MagicMock()
+    fake_l1.fallbacks_used = []
     fake_writer = MagicMock()
     fake_writer.__enter__ = MagicMock(return_value=fake_writer)
     fake_writer.__exit__ = MagicMock(return_value=False)
@@ -814,7 +819,7 @@ def test_multisat_skips_l1_construction_when_policy_disables_it(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     with patch.object(multisat_module, "parse_args", return_value=fake_args), \
          patch.object(multisat_module, "load_config", return_value=config), \
-         patch.object(multisat_module, "L1MacroLayer") as l1_ctor, \
+         patch.object(multisat_module, "L1MacroLayer", return_value=fake_l1) as l1_ctor, \
          patch.object(multisat_module, "L2TopoLayer", return_value=MagicMock()) as l2_ctor, \
          patch.object(multisat_module, "L3UrbanLayer", return_value=MagicMock()) as l3_ctor, \
          patch.object(multisat_module, "build_frame_builder_for_script", return_value=fake_fb), \
@@ -830,7 +835,85 @@ def test_multisat_skips_l1_construction_when_policy_disables_it(tmp_path, monkey
          patch.object(multisat_module, "export_dataset", return_value=({"path_loss_map": str(project_root / "output" / "npy" / "frame.npy")}, None)):
         multisat_module.main()
 
-    assert l1_ctor.call_count == 0
+    assert l1_ctor.call_count == 1
+    assert l2_ctor.call_count == 0
+    assert l3_ctor.call_count == 0
+
+
+def test_multisat_keeps_l1_construction_for_satellite_enumeration(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    config = {
+        "scene": {"profile": "plain_sparse"},
+        "origin": {"latitude": 34.0, "longitude": 108.0},
+        "layers": {
+            "l1_macro": {"enabled": False, "tle_file": str(tle_path)},
+            "l2_topo": {"enabled": False},
+            "l3_urban": {"enabled": False},
+        },
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+    }
+
+    fake_args = MagicMock(
+        config="unused.yaml",
+        start=None,
+        end=None,
+        step_minutes=None,
+        max_frames=None,
+        origin_lat=None,
+        origin_lon=None,
+        fusion_mode="best-server",
+        max_satellites=8,
+        min_elevation_deg=None,
+        soft_min_power=1e-30,
+        norad_id=None,
+        output_dir=str(project_root / "output"),
+        output_prefix="multisat_ts",
+        dpi=180,
+        cmap="viridis",
+        allow_missing_data=True,
+    )
+
+    fake_fb = MagicMock(grid=GRID, build=MagicMock(return_value=FRAME))
+    fake_l1 = MagicMock()
+    fake_l1.NO_COVERAGE_LOSS_DB = 300.0
+    fake_l1.get_visible_satellites.return_value = []
+    fake_l1.clear_fallbacks = MagicMock()
+    fake_l1.fallbacks_used = []
+    fake_writer = MagicMock()
+    fake_writer.__enter__ = MagicMock(return_value=fake_writer)
+    fake_writer.__exit__ = MagicMock(return_value=False)
+
+    (project_root / "output" / "png").mkdir(parents=True)
+    (project_root / "output" / "npy").mkdir(parents=True)
+    (project_root / "output" / "frame_json").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    with patch.object(multisat_module, "parse_args", return_value=fake_args), \
+         patch.object(multisat_module, "load_config", return_value=config), \
+         patch.object(multisat_module, "L1MacroLayer", return_value=fake_l1) as l1_ctor, \
+         patch.object(multisat_module, "L2TopoLayer", return_value=MagicMock()) as l2_ctor, \
+         patch.object(multisat_module, "L3UrbanLayer", return_value=MagicMock()) as l3_ctor, \
+         patch.object(multisat_module, "build_frame_builder_for_script", return_value=fake_fb), \
+         patch.object(multisat_module, "make_output_dirs", return_value={
+             "root": project_root / "output",
+             "png": project_root / "output" / "png",
+             "npy": project_root / "output" / "npy",
+             "json": project_root / "output" / "frame_json",
+             "manifest": project_root / "output" / "manifest.jsonl",
+         }), \
+         patch.object(multisat_module, "ManifestWriter", return_value=fake_writer), \
+         patch.object(multisat_module, "plot_radio_map"), \
+         patch.object(multisat_module, "export_dataset", return_value=({"path_loss_map": str(project_root / "output" / "npy" / "frame.npy")}, None)):
+        multisat_module.main()
+
+    assert l1_ctor.call_count == 1
     assert l2_ctor.call_count == 0
     assert l3_ctor.call_count == 0
 

@@ -872,8 +872,7 @@ def test_multisat_skips_l1_propagation_when_policy_disables_it():
 
     frame_builder = MagicMock(grid=GRID, build=MagicMock(return_value=FRAME))
     with patch("src.planning.satellite_selector.SatelliteSelector") as selector_cls, \
-         patch("src.compose.project_to_product_grid", return_value={}), \
-         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.full((8, 8), 300.0, dtype=np.float32))):
+         patch("src.compose.project_to_product_grid", return_value={}):
         selector_cls.return_value.select.return_value = {"norad_id": "25544", "azimuth_deg": 180.0, "elevation_deg": 45.0, "slant_range_m": 600_000.0, "lat_deg": 34.0, "lon_deg": 108.0, "alt_m": 550000.0}
         l1_map, l2_map, l3_map, total_map, sat_info, frame = multisat_module.compute_satellite_maps(
             l1_layer=l1,

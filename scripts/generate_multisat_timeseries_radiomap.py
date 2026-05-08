@@ -431,6 +431,8 @@ def compute_satellite_maps(
         **projected,
     )
     total_map = msm.composite_db
+    if not enable_l1:
+        total_map = total_map + l1_map
     return l1_map, l2_map, l3_map, total_map, sat, frame
 
 

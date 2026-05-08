@@ -129,6 +129,33 @@ def policy_layer_config(config: dict, enabled_layers) -> dict:
     return policy_config
 
 
+def preflight_layer_config(config: dict, policy) -> dict:
+    """Return a config copy for CLI validation that skips only scene-policy disables."""
+    preflight = dict(config)
+    layers = config.get('layers', {})
+    if not isinstance(layers, dict):
+        return preflight
+
+    disabled_by_policy = {
+        layer_name
+        for layer_name, reason in policy.disabled_layers
+        if reason.reason_type in {"scene_policy", "user_override"}
+    }
+
+    preflight_layers = {}
+    for layer_name, layer_cfg in layers.items():
+        if not isinstance(layer_cfg, dict):
+            preflight_layers[layer_name] = layer_cfg
+            continue
+        layer_copy = dict(layer_cfg)
+        if layer_name in disabled_by_policy:
+            layer_copy['enabled'] = False
+        preflight_layers[layer_name] = layer_copy
+
+    preflight['layers'] = preflight_layers
+    return preflight
+
+
 def initialize_layers(config: dict, policy=None):
     """
     Initialize physical layers based on configuration.
@@ -483,7 +510,7 @@ def main():
     normalized_config = normalize_layer_paths(project_root, config)
     strict = bool(normalized_config.get('data_validation', {}).get('strict', False))
     policy = resolve_layer_policy(normalized_config, strict=strict)
-    validation_config = policy_layer_config(normalized_config, policy.enabled_layers)
+    validation_config = preflight_layer_config(normalized_config, policy)
 
     report = validate_data_integrity(config=validation_config, project_root=project_root, strict=strict_data)
     print(format_data_validation_report(report))

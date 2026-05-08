@@ -514,6 +514,8 @@ def main():
         if inferred_profile:
             scene_cfg = dict(policy_config.get('scene', {}))
             scene_cfg['profile'] = inferred_profile
+            config['scene'] = dict(scene_cfg)
+            normalized_config['scene'] = dict(scene_cfg)
             policy_config['scene'] = scene_cfg
 
     policy = resolve_layer_policy(policy_config, strict=strict)

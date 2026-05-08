@@ -301,6 +301,20 @@ def resolve_multisat_policy(config: Dict[str, Any], strict: bool):
     return policy, policy_config
 
 
+def collect_manifest_input_file_paths(config: Dict[str, Any], strict: bool) -> Dict[str, str]:
+    """Collect manifest input paths without forcing fallback-capable optional sources in strict mode."""
+    input_files = collect_input_file_paths(config, strict=False if strict else strict)
+    if not strict:
+        return input_files
+
+    filtered: Dict[str, str] = {}
+    for label, path in input_files.items():
+        if label in {"ionex_file", "era5_file"} and not Path(path).exists():
+            continue
+        filtered[label] = path
+    return filtered
+
+
 def policy_layer_config(config: Dict[str, Any], enabled_layers: Tuple[str, ...]) -> Dict[str, Any]:
     """Return a shallow config copy with layer enabled flags aligned to policy."""
     policy_config = dict(config)
@@ -508,7 +522,7 @@ def main() -> None:
         origin_lat,
         origin_lon,
     )
-    input_file_paths = collect_input_file_paths(manifest_config, strict=strict)
+    input_file_paths = collect_manifest_input_file_paths(manifest_config, strict=strict)
 
     if target_norad_ids and l1_layer is not None:
         l1_layer.target_norad_ids = target_norad_ids

@@ -409,7 +409,7 @@ def test_main_cli_preflight_keeps_missing_input_enabled_under_strict_data(tmp_pa
         config="unused.yaml",
         output=None,
         strict_data=True,
-        check_data_only=True,
+        check_data_only=False,
     )
 
     with patch.object(main_module.argparse.ArgumentParser, "parse_args", return_value=fake_args), \
@@ -492,7 +492,7 @@ def test_main_cli_strict_mode_infers_legacy_scene_profile(tmp_path):
         config="unused.yaml",
         output=None,
         strict_data=True,
-        check_data_only=True,
+        check_data_only=False,
     )
     captured = {}
 
@@ -504,12 +504,12 @@ def test_main_cli_strict_mode_infers_legacy_scene_profile(tmp_path):
          patch.object(main_module, "load_config", return_value=config), \
          patch.object(main_module, "resolve_layer_policy", wraps=main_module.resolve_layer_policy) as resolve_policy, \
          patch.object(main_module, "validate_data_integrity", side_effect=_validate), \
-         patch.object(main_module, "format_data_validation_report", return_value="ok"):
-        with pytest.raises(SystemExit) as exc:
-            main_module.main()
+         patch.object(main_module, "format_data_validation_report", return_value="ok"), \
+         patch.object(main_module, "run_simulation") as run_sim:
+        main_module.main()
 
-    assert exc.value.code == 0
     assert resolve_policy.call_args.args[0]["scene"]["profile"] == "suburban_mixed"
+    assert run_sim.call_args.args[0]["scene"]["profile"] == "suburban_mixed"
     assert captured["strict"] is True
 
 
@@ -865,6 +865,94 @@ def test_multisat_frame_builder_uses_policy_aligned_layer_config():
     frame_builder = multisat_module.build_frame_builder_for_script(config, ORIGIN_LAT, ORIGIN_LON)
 
     assert frame_builder.coverage.l2_grid.width_m == frame_builder.coverage.l1_grid.width_m
+
+
+def test_multisat_strict_mode_ignores_missing_optional_l1_inputs(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    dem_path = project_root / "data" / "dem.tif"
+    dem_path.write_text("dem", encoding="utf-8")
+    tiles_dir = project_root / "data" / "tiles"
+    tiles_dir.mkdir(parents=True)
+    config = {
+        "scene": {"profile": "suburban_mixed"},
+        "layers": {
+            "l1_macro": {
+                "enabled": True,
+                "tle_file": str(tle_path),
+                "ionex_file": str(project_root / "missing.ionex"),
+                "era5_file": str(project_root / "missing.nc"),
+            },
+            "l2_topo": {"enabled": True, "dem_file": str(dem_path)},
+            "l3_urban": {"enabled": True, "tile_cache_root": str(tiles_dir)},
+        },
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+    }
+
+    fake_args = MagicMock(
+        config="unused.yaml",
+        start=None,
+        end=None,
+        step_minutes=None,
+        max_frames=None,
+        origin_lat=None,
+        origin_lon=None,
+        fusion_mode="best-server",
+        max_satellites=8,
+        min_elevation_deg=None,
+        soft_min_power=1e-30,
+        norad_id=None,
+        output_dir=str(project_root / "output"),
+        output_prefix="multisat_ts",
+        dpi=180,
+        cmap="viridis",
+        allow_missing_data=False,
+    )
+
+    fake_l1 = MagicMock()
+    fake_l1.NO_COVERAGE_LOSS_DB = 300.0
+    fake_l1.get_visible_satellites.return_value = []
+    fake_l1.clear_fallbacks = MagicMock()
+    fake_l1.fallbacks_used = []
+    fake_l1.target_norad_ids = None
+    fake_l2 = MagicMock()
+    fake_l3 = MagicMock()
+    fake_fb = MagicMock(grid=GRID, build=MagicMock(return_value=FRAME))
+    fake_writer = MagicMock()
+    fake_writer.__enter__ = MagicMock(return_value=fake_writer)
+    fake_writer.__exit__ = MagicMock(return_value=False)
+
+    (project_root / "output" / "png").mkdir(parents=True)
+    (project_root / "output" / "npy").mkdir(parents=True)
+    (project_root / "output" / "frame_json").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    with patch.object(multisat_module, "parse_args", return_value=fake_args), \
+         patch.object(multisat_module, "load_config", return_value=config), \
+         patch.object(multisat_module, "L1MacroLayer", return_value=fake_l1), \
+         patch.object(multisat_module, "L2TopoLayer", return_value=fake_l2), \
+         patch.object(multisat_module, "L3UrbanLayer", return_value=fake_l3), \
+         patch.object(multisat_module, "build_frame_builder_for_script", return_value=fake_fb), \
+         patch.object(multisat_module, "make_output_dirs", return_value={
+             "root": project_root / "output",
+             "png": project_root / "output" / "png",
+             "npy": project_root / "output" / "npy",
+             "json": project_root / "output" / "frame_json",
+             "manifest": project_root / "output" / "manifest.jsonl",
+         }), \
+         patch.object(multisat_module, "ManifestWriter", return_value=fake_writer), \
+         patch.object(multisat_module, "plot_radio_map"), \
+         patch.object(multisat_module, "export_dataset", return_value=({"path_loss_map": str(project_root / "output" / "npy" / "frame.npy")}, None)), \
+         patch.object(multisat_module, "collect_input_file_paths", wraps=collect_input_file_paths) as collect_paths:
+        multisat_module.main()
+
+    assert collect_paths.call_args.kwargs["strict"] is False
 
 
 def test_multisat_strict_missing_input_without_scene_profile_raises(tmp_path, monkeypatch):

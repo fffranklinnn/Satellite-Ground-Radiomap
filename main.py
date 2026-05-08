@@ -130,7 +130,7 @@ def policy_layer_config(config: dict, enabled_layers) -> dict:
 
 
 def preflight_layer_config(config: dict, policy) -> dict:
-    """Return a config copy for CLI validation that skips only scene-policy disables."""
+    """Return a config copy for CLI validation that mirrors resolved layer disables."""
     preflight = dict(config)
     layers = config.get('layers', {})
     if not isinstance(layers, dict):
@@ -138,8 +138,7 @@ def preflight_layer_config(config: dict, policy) -> dict:
 
     disabled_by_policy = {
         layer_name
-        for layer_name, reason in policy.disabled_layers
-        if reason.reason_type in {"scene_policy", "user_override"}
+        for layer_name, _reason in policy.disabled_layers
     }
 
     preflight_layers = {}

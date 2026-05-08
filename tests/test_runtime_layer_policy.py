@@ -423,6 +423,49 @@ def test_main_cli_preflight_keeps_missing_input_enabled_under_strict_data(tmp_pa
     assert validate_data.call_count == 0
 
 
+def test_main_cli_preflight_mirrors_missing_input_policy_disable(tmp_path):
+    config = {
+        "scene": {"profile": "urban_flat"},
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": str(tmp_path / "tle.tle")},
+            "l2_topo": {"enabled": True, "dem_file": str(tmp_path / "dem.tif")},
+            "l3_urban": {"enabled": True, "tile_cache_root": str(tmp_path / "missing-tiles")},
+        },
+        "output": {"directory": str(tmp_path / "out")},
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+        "data_validation": {"strict": False},
+    }
+    fake_args = MagicMock(
+        config="unused.yaml",
+        output=None,
+        strict_data=False,
+        check_data_only=True,
+    )
+    captured = {}
+
+    def _validate(**kwargs):
+        captured.update(kwargs)
+        return {"errors": [], "warnings": [], "checks": [], "strict": kwargs["strict"]}
+
+    with patch.object(main_module.argparse.ArgumentParser, "parse_args", return_value=fake_args), \
+         patch.object(main_module, "load_config", return_value=config), \
+         patch.object(main_module, "validate_data_integrity", side_effect=_validate), \
+         patch.object(main_module, "format_data_validation_report", return_value="ok"), \
+         patch.object(main_module, "run_simulation") as run_sim:
+        with pytest.raises(SystemExit) as exc:
+            main_module.main()
+
+    assert exc.value.code == 0
+    assert run_sim.call_count == 0
+    assert captured["strict"] is False
+    assert captured["config"]["layers"]["l3_urban"]["enabled"] is False
+
+
 def test_benchmark_runner_strict_paths_use_project_root(tmp_path, monkeypatch):
     project_root = tmp_path / "repo"
     (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)

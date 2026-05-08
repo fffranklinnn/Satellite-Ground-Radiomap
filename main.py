@@ -479,7 +479,13 @@ def main():
         config.setdefault('layers', {}).setdefault('l2_topo', {})['strict_data'] = True
         config.setdefault('layers', {}).setdefault('l3_urban', {})['strict_data'] = True
 
-    report = validate_data_integrity(config=config, project_root=Path(__file__).parent, strict=strict_data)
+    project_root = _resolve_project_root()
+    normalized_config = normalize_layer_paths(project_root, config)
+    strict = bool(normalized_config.get('data_validation', {}).get('strict', False))
+    policy = resolve_layer_policy(normalized_config, strict=strict)
+    validation_config = policy_layer_config(normalized_config, policy.enabled_layers)
+
+    report = validate_data_integrity(config=validation_config, project_root=project_root, strict=strict_data)
     print(format_data_validation_report(report))
 
     if report['errors']:
@@ -498,7 +504,7 @@ def main():
 
     # Run simulation
     try:
-        run_simulation(config, output_dir)
+        run_simulation(config, output_dir, project_root=project_root)
     except KeyboardInterrupt:
         print("\n\nSimulation interrupted by user.")
         sys.exit(1)

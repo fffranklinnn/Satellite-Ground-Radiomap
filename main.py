@@ -508,7 +508,7 @@ def main():
 
     project_root = _resolve_project_root()
     normalized_config = normalize_layer_paths(project_root, config)
-    strict = bool(normalized_config.get('data_validation', {}).get('strict', False))
+    strict = strict_data
     policy = resolve_layer_policy(normalized_config, strict=strict)
     validation_config = preflight_layer_config(normalized_config, policy)
 

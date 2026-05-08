@@ -387,11 +387,13 @@ def test_main_cli_preflight_uses_policy_filtered_config(tmp_path):
 
 
 def test_main_cli_preflight_keeps_missing_input_enabled_under_strict_data(tmp_path):
+    tle_path = tmp_path / "tle.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
     config = {
         "scene": {"profile": "mountain_rural"},
         "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
         "layers": {
-            "l1_macro": {"enabled": True, "tle_file": str(tmp_path / "tle.tle")},
+            "l1_macro": {"enabled": True, "tle_file": str(tle_path)},
             "l2_topo": {"enabled": True, "dem_file": str(tmp_path / "missing-dem.tif")},
             "l3_urban": {"enabled": True, "tile_cache_root": str(tmp_path / "missing-tiles")},
         },
@@ -409,30 +411,16 @@ def test_main_cli_preflight_keeps_missing_input_enabled_under_strict_data(tmp_pa
         strict_data=True,
         check_data_only=True,
     )
-    captured = {}
-
-    def _validate(**kwargs):
-        captured.update(kwargs)
-        return {
-            "errors": ["missing dem"],
-            "warnings": [],
-            "checks": [],
-            "strict": kwargs["strict"],
-        }
 
     with patch.object(main_module.argparse.ArgumentParser, "parse_args", return_value=fake_args), \
          patch.object(main_module, "load_config", return_value=config), \
-         patch.object(main_module, "validate_data_integrity", side_effect=_validate), \
-         patch.object(main_module, "format_data_validation_report", return_value="ok"), \
+         patch.object(main_module, "validate_data_integrity") as validate_data, \
          patch.object(main_module, "run_simulation") as run_sim:
-        with pytest.raises(SystemExit) as exc:
+        with pytest.raises(MissingRequiredInputError):
             main_module.main()
 
-    assert exc.value.code == 2
     assert run_sim.call_count == 0
-    assert captured["strict"] is True
-    assert captured["config"]["layers"]["l2_topo"]["enabled"] is True
-    assert captured["config"]["layers"]["l3_urban"]["enabled"] is False
+    assert validate_data.call_count == 0
 
 
 def test_benchmark_runner_strict_paths_use_project_root(tmp_path, monkeypatch):

@@ -659,6 +659,47 @@ def test_benchmark_runner_strict_missing_input_raises(tmp_path):
         runner.run_frame(TS, tmp_path, ["path_loss_map"])
 
 
+def test_benchmark_runner_strict_mode_infers_legacy_scene_profile(tmp_path):
+    tle_path = tmp_path / "tle.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    dem_path = tmp_path / "dem.tif"
+    dem_path.write_text("dem", encoding="utf-8")
+    tiles_dir = tmp_path / "tiles"
+    tiles_dir.mkdir()
+
+    config = {
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": str(tle_path)},
+            "l2_topo": {"enabled": True, "dem_file": str(dem_path)},
+            "l3_urban": {"enabled": True, "tile_cache_root": str(tiles_dir)},
+        },
+        "data_validation": {"strict": True},
+    }
+
+    l1, l2, l3 = _mock_layers()
+    fake_selector = MagicMock()
+    fake_selector.select.return_value = {"norad_id": "25544"}
+    runner = BenchmarkRunner(
+        frame_builder=MagicMock(build=MagicMock(return_value=FRAME)),
+        l1_layer=l1,
+        l2_layer=l2,
+        l3_layer=l3,
+        config=config,
+        data_snapshot_id="snap_001",
+    )
+
+    with patch("src.pipeline.benchmark_runner.export_dataset", return_value=({"path_loss_map": str(tmp_path / "out.npy")}, None)), \
+         patch("src.pipeline.benchmark_runner.collect_input_file_paths", return_value={}), \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((8, 8), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)), \
+         patch("src.planning.satellite_selector.SatelliteSelector", return_value=fake_selector), \
+         patch("src.pipeline.benchmark_runner.resolve_layer_policy", wraps=resolve_layer_policy) as resolve_policy:
+        runner.run_frame(TS, tmp_path, ["path_loss_map"])
+
+    assert resolve_policy.call_args.args[0]["scene"]["profile"] == "suburban_mixed"
+
+
 def test_multisat_compute_satellite_maps_respects_policy_disabled_layers():
     l1 = MagicMock()
     entry = MagicMock(

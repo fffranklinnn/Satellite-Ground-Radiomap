@@ -34,7 +34,7 @@ from ..layers.l1_macro import L1MacroLayer
 from ..layers.l2_topo import L2TopoLayer
 from ..layers.l3_urban import L3UrbanLayer
 from ..pipeline.manifest_writer import ManifestWriter
-from ..planning import enabled_layer_config, layer_policy_metadata, resolve_layer_policy
+from ..planning import enabled_layer_config, infer_scene_profile, layer_policy_metadata, resolve_layer_policy
 from ..products.manifest import ProductManifest, collect_input_file_paths
 from ..products.projectors import export_dataset
 
@@ -147,7 +147,15 @@ class BenchmarkRunner:
         # Select satellite before building frame (canonical path)
         normalized_config = self._normalize_layer_paths(self.config)
         _strict = bool(normalized_config.get('data_validation', {}).get('strict', False))
-        policy = resolve_layer_policy(normalized_config, strict=_strict, benchmark=True)
+        policy_config = dict(normalized_config)
+        if _strict and not policy_config.get("scene", {}).get("profile"):
+            inferred_profile = infer_scene_profile(policy_config)
+            if inferred_profile:
+                scene_cfg = dict(policy_config.get("scene", {}))
+                scene_cfg["profile"] = inferred_profile
+                policy_config["scene"] = scene_cfg
+
+        policy = resolve_layer_policy(policy_config, strict=_strict, benchmark=True)
         manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
         sat_info = None
         if policy.is_enabled("l1_macro") and self.l1_layer is not None:

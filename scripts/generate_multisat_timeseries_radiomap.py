@@ -202,9 +202,14 @@ def check_required_data(project_root: Path,
                         allow_missing: bool,
                         *,
                         strict: bool,
-                        benchmark: bool) -> None:
+                        benchmark: bool,
+                        policy_strict: Optional[bool] = None) -> None:
     normalized_config = normalize_layer_paths(project_root, config)
-    policy = resolve_layer_policy(normalized_config, strict=strict, benchmark=benchmark)
+    policy = resolve_layer_policy(
+        normalized_config,
+        strict=strict if policy_strict is None else policy_strict,
+        benchmark=benchmark,
+    )
     enabled = set(policy.enabled_layers)
     layers_cfg = normalized_config.get("layers", {})
     l1_cfg = layers_cfg.get("l1_macro", {})
@@ -278,6 +283,14 @@ def fmt_seconds(seconds: float) -> str:
 
 def frame_stamp(ts: datetime) -> str:
     return ts.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def resolve_multisat_policy(config: Dict[str, Any], strict: bool):
+    scene = config.get("scene", {})
+    has_explicit_scene = isinstance(scene, dict) and bool(scene.get("profile"))
+    policy_strict = bool(strict and has_explicit_scene)
+    policy = resolve_layer_policy(config, strict=policy_strict, benchmark=False)
+    return policy, policy_strict
 
 
 def compute_satellite_maps(
@@ -408,7 +421,7 @@ def main() -> None:
     config = load_config(config_path)
     strict = not args.allow_missing_data
     normalized_config = normalize_layer_paths(project_root, config)
-    policy = resolve_layer_policy(normalized_config, strict=strict, benchmark=False)
+    policy, policy_strict = resolve_multisat_policy(normalized_config, strict)
     manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
     check_required_data(
         project_root,
@@ -416,6 +429,7 @@ def main() -> None:
         allow_missing=args.allow_missing_data,
         strict=strict,
         benchmark=False,
+        policy_strict=policy_strict,
     )
 
     layers_cfg = normalized_config["layers"]

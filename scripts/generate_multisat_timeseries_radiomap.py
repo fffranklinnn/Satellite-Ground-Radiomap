@@ -123,8 +123,7 @@ def normalize_layer_paths(project_root: Path, config: Dict[str, Any]) -> Dict[st
                 tle_copy = dict(tle_cfg)
                 tle_copy["file"] = str(resolve_path(project_root, tle_copy.get("file"))) if tle_copy.get("file") else tle_copy.get("file")
                 layer_copy["tle"] = tle_copy
-            else:
-                layer_copy["tle_file"] = str(resolve_path(project_root, layer_copy.get("tle_file"))) if layer_copy.get("tle_file") else layer_copy.get("tle_file")
+            layer_copy["tle_file"] = str(resolve_path(project_root, layer_copy.get("tle_file"))) if layer_copy.get("tle_file") else layer_copy.get("tle_file")
             for key in ("ionex_file", "era5_file"):
                 if layer_copy.get(key):
                     layer_copy[key] = str(resolve_path(project_root, layer_copy[key]))

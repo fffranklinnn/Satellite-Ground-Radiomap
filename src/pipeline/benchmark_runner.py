@@ -98,11 +98,10 @@ class BenchmarkRunner:
                         path_value = Path(str(tle_file))
                         tle_copy["file"] = str(path_value if path_value.is_absolute() else self.project_root / path_value)
                     layer_copy["tle"] = tle_copy
-                else:
-                    tle_file = layer_copy.get("tle_file")
-                    if tle_file:
-                        path_value = Path(str(tle_file))
-                        layer_copy["tle_file"] = str(path_value if path_value.is_absolute() else self.project_root / path_value)
+                tle_file = layer_copy.get("tle_file")
+                if tle_file:
+                    path_value = Path(str(tle_file))
+                    layer_copy["tle_file"] = str(path_value if path_value.is_absolute() else self.project_root / path_value)
                 for key in ("ionex_file", "era5_file"):
                     value = layer_copy.get(key)
                     if value:

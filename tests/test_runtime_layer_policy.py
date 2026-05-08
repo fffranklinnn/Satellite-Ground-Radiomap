@@ -513,6 +513,39 @@ def test_main_cli_strict_mode_infers_legacy_scene_profile(tmp_path):
     assert captured["strict"] is True
 
 
+def test_tle_file_fallback_is_normalized_even_with_empty_tle_mapping(tmp_path):
+    project_root = tmp_path / "repo"
+    tle_file = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_file.parent.mkdir(parents=True)
+    tle_file.write_text("dummy tle", encoding="utf-8")
+    config = {
+        "layers": {
+            "l1_macro": {
+                "enabled": True,
+                "tle": {},
+                "tle_file": "data/starlink-2025-tle/2025-01-01.tle",
+            }
+        }
+    }
+
+    main_normalized = main_module.normalize_layer_paths(project_root, config)
+    runner = BenchmarkRunner(
+        frame_builder=MagicMock(),
+        l1_layer=MagicMock(),
+        l2_layer=MagicMock(),
+        l3_layer=MagicMock(),
+        config=config,
+        data_snapshot_id="snap_001",
+        project_root=project_root,
+    )
+    multisat_normalized = multisat_module.normalize_layer_paths(project_root, config)
+    runner_normalized = runner._normalize_layer_paths(config)
+
+    assert main_normalized["layers"]["l1_macro"]["tle_file"] == str(tle_file)
+    assert runner_normalized["layers"]["l1_macro"]["tle_file"] == str(tle_file)
+    assert multisat_normalized["layers"]["l1_macro"]["tle_file"] == str(tle_file)
+
+
 def test_benchmark_runner_strict_paths_use_project_root(tmp_path, monkeypatch):
     project_root = tmp_path / "repo"
     (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)

@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import sys
+from dataclasses import is_dataclass, replace
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import warnings
@@ -27,7 +28,7 @@ from src.layers.base import LayerContext
 from src.context import GridSpec, CoverageSpec, FrameBuilder
 from src.context.multiscale_map import MultiScaleMap
 from src.context.time_utils import require_utc
-from src.planning import enabled_layer_config, infer_scene_profile, layer_policy_metadata, resolve_layer_policy
+from src.planning import SUPPORTED_SCENE_PROFILES, enabled_layer_config, infer_scene_profile, layer_policy_metadata, resolve_layer_policy
 from src.products.manifest import ProductManifest, collect_input_file_paths
 from src.products.projectors import export_dataset
 from src.pipeline.manifest_writer import ManifestWriter
@@ -154,6 +155,14 @@ def preflight_layer_config(config: dict, policy) -> dict:
     return preflight
 
 
+def _scene_profile_from_enabled_layers(enabled_layers) -> str:
+    enabled_tuple = tuple(enabled_layers)
+    for profile_name, default_layers in SUPPORTED_SCENE_PROFILES.items():
+        if tuple(default_layers) == enabled_tuple:
+            return profile_name
+    return ""
+
+
 def initialize_layers(config: dict, policy=None):
     """
     Initialize physical layers based on configuration.
@@ -251,6 +260,9 @@ def run_simulation(config: dict, output_dir: Path, project_root: Path | None = N
 
     strict = bool(strict_data if strict_data is not None else normalized_config.get('data_validation', {}).get('strict', False))
     policy = resolve_layer_policy(normalized_config, strict=strict)
+    resolved_scene_profile = _scene_profile_from_enabled_layers(policy.enabled_layers)
+    if is_dataclass(policy) and resolved_scene_profile and resolved_scene_profile != policy.scene_profile:
+        policy = replace(policy, scene_profile=resolved_scene_profile)
     manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
 
     # Initialize layers only after policy is resolved
@@ -522,6 +534,9 @@ def main():
             policy_config['scene'] = scene_cfg
 
     policy = resolve_layer_policy(policy_config, strict=strict)
+    resolved_scene_profile = _scene_profile_from_enabled_layers(policy.enabled_layers)
+    if is_dataclass(policy) and resolved_scene_profile and resolved_scene_profile != policy.scene_profile:
+        policy = replace(policy, scene_profile=resolved_scene_profile)
     validation_config = preflight_layer_config(normalized_config, policy)
 
     report = validate_data_integrity(config=validation_config, project_root=project_root, strict=strict_data)

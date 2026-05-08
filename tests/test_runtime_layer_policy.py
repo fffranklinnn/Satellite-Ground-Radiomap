@@ -181,7 +181,56 @@ def test_main_run_simulation_marks_missing_input_without_failing(tmp_path):
     assert l3.refine_urban.call_count == 0
     manifest_cls.build.assert_called()
     _, kwargs = manifest_cls.build.call_args
-    assert kwargs["metadata"]["scene_profile"] == "urban_flat"
+    assert kwargs["metadata"]["scene_profile"] == "plain_sparse"
+    assert kwargs["metadata"]["disabled_layers"]["l3_urban"]["reason_type"] == "missing_input"
+
+
+def test_main_run_simulation_recomputes_profile_after_missing_input_downgrade(tmp_path):
+    missing_dem = tmp_path / "missing-dem.tif"
+    missing_tiles = tmp_path / "missing-tiles"
+    config = {
+        "scene": {"profile": "suburban_mixed"},
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True},
+            "l2_topo": {"enabled": True, "dem_file": str(missing_dem)},
+            "l3_urban": {"enabled": True, "tile_cache_root": str(missing_tiles)},
+        },
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+        "logging": {"level": "INFO"},
+        "output": {"save_individual_layers": False, "save_composite": True, "dpi": 72},
+        "performance": {"enable_profiling": False},
+        "data_validation": {"strict": False, "snapshot_id": "snap_001"},
+    }
+    l1, l2, l3 = _mock_layers()
+
+    fake_logger = MagicMock()
+    fake_sim_logger = MagicMock()
+    fake_fb = MagicMock(build=MagicMock(return_value=FRAME))
+    fake_manifest = MagicMock(metadata={})
+
+    with patch.object(main_module, "setup_logger", return_value=fake_logger), \
+         patch.object(main_module, "SimulationLogger", return_value=fake_sim_logger), \
+         patch.object(main_module, "initialize_layers", return_value=(l1, l2, l3)), \
+         patch.object(main_module, "build_frame_builder", return_value=fake_fb), \
+         patch.object(main_module, "collect_input_file_paths", return_value={}), \
+         patch.object(main_module, "export_dataset", return_value=({"path_loss_map": str(tmp_path / "out.npy")}, None)), \
+         patch.object(main_module, "plot_radio_map"), \
+         patch.object(main_module, "plot_layer_comparison"), \
+         patch.object(main_module, "ProductManifest") as manifest_cls, \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((8, 8), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)):
+        manifest_cls.build.return_value = fake_manifest
+        main_module.run_simulation(config, tmp_path)
+
+    manifest_cls.build.assert_called()
+    _, kwargs = manifest_cls.build.call_args
+    assert kwargs["metadata"]["scene_profile"] == "plain_sparse"
+    assert kwargs["metadata"]["disabled_layers"]["l2_topo"]["reason_type"] == "missing_input"
     assert kwargs["metadata"]["disabled_layers"]["l3_urban"]["reason_type"] == "missing_input"
 
 

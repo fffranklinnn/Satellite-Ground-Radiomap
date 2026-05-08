@@ -66,6 +66,7 @@ class BenchmarkRunner:
         l3_layer: Optional[L3UrbanLayer] = None,
         config: Optional[Dict[str, Any]] = None,
         data_snapshot_id: str = "",
+        project_root: Optional[Path] = None,
     ) -> None:
         self.frame_builder = frame_builder
         self.l1_layer = l1_layer
@@ -73,6 +74,55 @@ class BenchmarkRunner:
         self.l3_layer = l3_layer
         self.config = config or {}
         self.data_snapshot_id = data_snapshot_id
+        self.project_root = project_root or Path(__file__).resolve().parents[2]
+
+    def _normalize_layer_paths(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(config)
+        layers = config.get("layers", {})
+        if not isinstance(layers, dict):
+            return normalized
+
+        normalized_layers: Dict[str, Any] = {}
+        for layer_name, layer_cfg in layers.items():
+            if not isinstance(layer_cfg, dict):
+                normalized_layers[layer_name] = layer_cfg
+                continue
+
+            layer_copy = dict(layer_cfg)
+            if layer_name == "l1_macro":
+                tle_cfg = layer_copy.get("tle")
+                if isinstance(tle_cfg, dict):
+                    tle_copy = dict(tle_cfg)
+                    tle_file = tle_copy.get("file")
+                    if tle_file:
+                        path_value = Path(str(tle_file))
+                        tle_copy["file"] = str(path_value if path_value.is_absolute() else self.project_root / path_value)
+                    layer_copy["tle"] = tle_copy
+                else:
+                    tle_file = layer_copy.get("tle_file")
+                    if tle_file:
+                        path_value = Path(str(tle_file))
+                        layer_copy["tle_file"] = str(path_value if path_value.is_absolute() else self.project_root / path_value)
+                for key in ("ionex_file", "era5_file"):
+                    value = layer_copy.get(key)
+                    if value:
+                        path_value = Path(str(value))
+                        layer_copy[key] = str(path_value if path_value.is_absolute() else self.project_root / path_value)
+            elif layer_name == "l2_topo":
+                value = layer_copy.get("dem_file")
+                if value:
+                    path_value = Path(str(value))
+                    layer_copy["dem_file"] = str(path_value if path_value.is_absolute() else self.project_root / path_value)
+            elif layer_name == "l3_urban":
+                for key in ("tile_cache_root", "data_dir", "tiles_dir"):
+                    value = layer_copy.get(key)
+                    if value:
+                        path_value = Path(str(value))
+                        layer_copy[key] = str(path_value if path_value.is_absolute() else self.project_root / path_value)
+            normalized_layers[layer_name] = layer_copy
+
+        normalized["layers"] = normalized_layers
+        return normalized
 
     def run_frame(
         self,
@@ -96,21 +146,21 @@ class BenchmarkRunner:
             ProductManifest with output file hashes.
         """
         # Select satellite before building frame (canonical path)
-        _strict = bool(self.config.get('data_validation', {}).get('strict', False))
-        policy = resolve_layer_policy(self.config, strict=_strict, benchmark=True)
-        manifest_config = enabled_layer_config(self.config, policy.enabled_layers)
+        normalized_config = self._normalize_layer_paths(self.config)
+        _strict = bool(normalized_config.get('data_validation', {}).get('strict', False))
+        policy = resolve_layer_policy(normalized_config, strict=_strict, benchmark=True)
+        manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
         sat_info = None
         if policy.is_enabled("l1_macro") and self.l1_layer is not None:
             from src.planning.satellite_selector import SatelliteSelector
-            from pathlib import Path as _P
-            tle_cfg = self.config.get('layers', {}).get('l1_macro', {}).get('tle', {})
-            tle_path = (tle_cfg.get('file') if isinstance(tle_cfg, dict) else None) or self.config.get('layers', {}).get('l1_macro', {}).get('tle_file', '')
-            if tle_path and _P(tle_path).exists():
+            tle_cfg = normalized_config.get('layers', {}).get('l1_macro', {}).get('tle', {})
+            tle_path = (tle_cfg.get('file') if isinstance(tle_cfg, dict) else None) or normalized_config.get('layers', {}).get('l1_macro', {}).get('tle_file', '')
+            if tle_path and Path(tle_path).exists():
                 selector = SatelliteSelector(tle_path, strict=_strict)
-                target_ids = self.config.get('layers', {}).get('l1_macro', {}).get('target_norad_ids')
+                target_ids = normalized_config.get('layers', {}).get('l1_macro', {}).get('target_norad_ids')
                 if target_ids:
                     target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
-                origin = self.config.get('origin', {})
+                origin = normalized_config.get('origin', {})
                 sat_info = selector.select(
                     timestamp=timestamp,
                     center=(origin.get('latitude', 0), origin.get('longitude', 0)),
@@ -192,7 +242,7 @@ class BenchmarkRunner:
         manifest = ProductManifest.build(
             frame_id=frame.frame_id,
             timestamp_utc=frame.timestamp.isoformat(),
-            config=self.config,
+            config=normalized_config,
             data_snapshot_id=self.data_snapshot_id,
             input_files=collect_input_file_paths(manifest_config, strict=_strict),
             hash_files=True,

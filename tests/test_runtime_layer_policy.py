@@ -14,6 +14,7 @@ from src.context.grid_spec import GridSpec
 from src.pipeline.benchmark_runner import BenchmarkRunner
 from src.planning import MissingRequiredInputError, resolve_layer_policy
 from src.planning import enabled_layer_config
+from src.products.manifest import collect_input_file_paths
 
 
 ORIGIN_LAT = 34.0
@@ -182,6 +183,114 @@ def test_main_run_simulation_marks_missing_input_without_failing(tmp_path):
     _, kwargs = manifest_cls.build.call_args
     assert kwargs["metadata"]["scene_profile"] == "urban_flat"
     assert kwargs["metadata"]["disabled_layers"]["l3_urban"]["reason_type"] == "missing_input"
+
+
+def test_main_run_simulation_skips_disabled_constructor(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    dem_path = project_root / "data" / "dem.tif"
+    dem_path.write_text("dem", encoding="utf-8")
+
+    config = {
+        "scene": {"profile": "mountain_rural"},
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": "data/starlink-2025-tle/2025-01-01.tle"},
+            "l2_topo": {"enabled": True, "dem_file": "data/dem.tif"},
+            "l3_urban": {"enabled": True, "tile_cache_root": "data/tiles"},
+        },
+        "time": {
+            "start": "2025-01-03T00:00:00+00:00",
+            "end": "2025-01-03T00:00:00+00:00",
+            "step_hours": 1,
+        },
+        "logging": {"level": "INFO"},
+        "output": {"save_individual_layers": False, "save_composite": True, "dpi": 72},
+        "performance": {"enable_profiling": False},
+        "data_validation": {"strict": True, "snapshot_id": "snap_001"},
+    }
+
+    l1_layer = MagicMock()
+    l1_layer.propagate_entry.return_value = MagicMock(frame_id=FRAME.frame_id)
+    l1_layer.fallbacks_used = []
+    l1_layer.clear_fallbacks = MagicMock()
+    l2_layer = MagicMock()
+    l2_layer.propagate_terrain.return_value = MagicMock(frame_id=FRAME.frame_id)
+
+    fake_logger = MagicMock()
+    fake_sim_logger = MagicMock()
+    fake_fb = MagicMock(build=MagicMock(return_value=FRAME))
+    fake_selector = MagicMock()
+    fake_selector.select.return_value = {"norad_id": "25544"}
+
+    monkeypatch.chdir(tmp_path)
+    with patch.object(main_module, "setup_logger", return_value=fake_logger), \
+         patch.object(main_module, "SimulationLogger", return_value=fake_sim_logger), \
+         patch.object(main_module, "L1MacroLayer", return_value=l1_layer) as l1_ctor, \
+         patch.object(main_module, "L2TopoLayer", return_value=l2_layer) as l2_ctor, \
+         patch.object(main_module, "L3UrbanLayer") as l3_ctor, \
+         patch.object(main_module, "build_frame_builder", return_value=fake_fb), \
+         patch.object(main_module, "collect_input_file_paths", return_value={}), \
+         patch.object(main_module, "export_dataset", return_value=({"path_loss_map": str(tmp_path / "out.npy")}, None)), \
+         patch.object(main_module, "plot_radio_map"), \
+         patch.object(main_module, "plot_layer_comparison"), \
+         patch("src.planning.satellite_selector.SatelliteSelector", return_value=fake_selector), \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((8, 8), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)):
+        main_module.run_simulation(config, tmp_path, project_root=project_root)
+
+    assert l1_ctor.called
+    assert l2_ctor.called
+    assert l3_ctor.call_count == 0
+    assert l2_layer.propagate_terrain.call_count == 1
+    assert l1_layer.propagate_entry.call_count == 1
+
+
+def test_benchmark_runner_strict_paths_use_project_root(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    (project_root / "data" / "starlink-2025-tle").mkdir(parents=True)
+    tle_path = project_root / "data" / "starlink-2025-tle" / "2025-01-01.tle"
+    tle_path.write_text("dummy tle", encoding="utf-8")
+    dem_path = project_root / "data" / "dem.tif"
+    dem_path.write_text("dem", encoding="utf-8")
+
+    config = {
+        "scene": {"profile": "mountain_rural"},
+        "origin": {"latitude": ORIGIN_LAT, "longitude": ORIGIN_LON},
+        "layers": {
+            "l1_macro": {"enabled": True, "tle_file": "data/starlink-2025-tle/2025-01-01.tle"},
+            "l2_topo": {"enabled": True, "dem_file": "data/dem.tif"},
+            "l3_urban": {"enabled": True, "tile_cache_root": "data/tiles"},
+        },
+        "data_validation": {"strict": True},
+    }
+
+    l1, l2, l3 = _mock_layers()
+    fake_selector = MagicMock()
+    fake_selector.select.return_value = {"norad_id": "25544"}
+    runner = BenchmarkRunner(
+        frame_builder=MagicMock(build=MagicMock(return_value=FRAME)),
+        l1_layer=l1,
+        l2_layer=l2,
+        l3_layer=l3,
+        config=config,
+        data_snapshot_id="snap_001",
+        project_root=project_root,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    with patch("src.pipeline.benchmark_runner.export_dataset", return_value=({"path_loss_map": str(tmp_path / "out.npy")}, None)), \
+         patch("src.pipeline.benchmark_runner.collect_input_file_paths", wraps=collect_input_file_paths) as input_paths, \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.zeros((8, 8), dtype=np.float32), l1_db=None, l2_db=None, l3_db=None)), \
+         patch("src.planning.satellite_selector.SatelliteSelector", return_value=fake_selector):
+        manifest = runner.run_frame(TS, tmp_path, ["path_loss_map"])
+
+    assert input_paths.called
+    assert manifest.input_file_hashes["tle_file"]
+    assert manifest.input_file_hashes["dem_file"]
 
 
 def test_benchmark_runner_strict_missing_input_raises(tmp_path):

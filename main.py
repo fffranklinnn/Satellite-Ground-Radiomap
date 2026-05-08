@@ -54,6 +54,60 @@ def load_config(config_file: str) -> dict:
     return config
 
 
+def _resolve_project_root(project_root: Path | None = None) -> Path:
+    return Path(project_root) if project_root is not None else Path(__file__).resolve().parent
+
+
+def normalize_layer_paths(project_root: Path, config: dict) -> dict:
+    """Resolve layer input paths against the project root for runtime checks."""
+    normalized = dict(config)
+    layers = config.get('layers', {})
+    if not isinstance(layers, dict):
+        return normalized
+
+    normalized_layers = {}
+    for layer_name, layer_cfg in layers.items():
+        if not isinstance(layer_cfg, dict):
+            normalized_layers[layer_name] = layer_cfg
+            continue
+
+        layer_copy = dict(layer_cfg)
+        if layer_name == 'l1_macro':
+            tle_cfg = layer_copy.get('tle')
+            if isinstance(tle_cfg, dict):
+                tle_copy = dict(tle_cfg)
+                tle_file = tle_copy.get('file')
+                if tle_file:
+                    path_value = Path(str(tle_file))
+                    tle_copy['file'] = str(path_value if path_value.is_absolute() else project_root / path_value)
+                layer_copy['tle'] = tle_copy
+            else:
+                tle_file = layer_copy.get('tle_file')
+                if tle_file:
+                    path_value = Path(str(tle_file))
+                    layer_copy['tle_file'] = str(path_value if path_value.is_absolute() else project_root / path_value)
+            for key in ('ionex_file', 'era5_file'):
+                value = layer_copy.get(key)
+                if value:
+                    path_value = Path(str(value))
+                    layer_copy[key] = str(path_value if path_value.is_absolute() else project_root / path_value)
+        elif layer_name == 'l2_topo':
+            value = layer_copy.get('dem_file')
+            if value:
+                path_value = Path(str(value))
+                layer_copy['dem_file'] = str(path_value if path_value.is_absolute() else project_root / path_value)
+        elif layer_name == 'l3_urban':
+            for key in ('tile_cache_root', 'data_dir', 'tiles_dir'):
+                value = layer_copy.get(key)
+                if value:
+                    path_value = Path(str(value))
+                    layer_copy[key] = str(path_value if path_value.is_absolute() else project_root / path_value)
+        normalized_layers[layer_name] = layer_copy
+
+    normalized['layers'] = normalized_layers
+    return normalized
+
+
 def initialize_layers(config: dict, policy=None):
     """
     Initialize physical layers based on configuration.
@@ -128,7 +182,7 @@ def build_frame_builder(config: dict) -> FrameBuilder:
     return FrameBuilder(grid=grid, coverage=coverage)
 
 
-def run_simulation(config: dict, output_dir: Path):
+def run_simulation(config: dict, output_dir: Path, project_root: Path | None = None):
     """
     Run the main simulation loop using the FrameBuilder pipeline.
 
@@ -145,12 +199,15 @@ def run_simulation(config: dict, output_dir: Path):
     sim_logger.start_simulation(config)
 
     # Parse time parameters through strict UTC helpers
-    strict = bool(config.get('data_validation', {}).get('strict', False))
-    policy = resolve_layer_policy(config, strict=strict)
-    manifest_config = enabled_layer_config(config, policy.enabled_layers)
+    project_root = _resolve_project_root(project_root)
+    normalized_config = normalize_layer_paths(project_root, config)
+
+    strict = bool(normalized_config.get('data_validation', {}).get('strict', False))
+    policy = resolve_layer_policy(normalized_config, strict=strict)
+    manifest_config = enabled_layer_config(normalized_config, policy.enabled_layers)
 
     # Initialize layers only after policy is resolved
-    l1_layer, l2_layer, l3_layer = initialize_layers(config, policy=policy)
+    l1_layer, l2_layer, l3_layer = initialize_layers(normalized_config, policy=policy)
 
     # Build FrameBuilder (replaces bare origin_lat/lon + legacy aggregator)
     frame_builder = build_frame_builder(manifest_config)
@@ -182,18 +239,18 @@ def run_simulation(config: dict, output_dir: Path):
         sat_info = None
         if policy.is_enabled('l1_macro') and l1_layer is not None:
             from src.planning.satellite_selector import SatelliteSelector
-            tle_path = config['layers'].get('l1_macro', {}).get('tle', {})
+            tle_path = normalized_config['layers'].get('l1_macro', {}).get('tle', {})
             if isinstance(tle_path, dict):
                 tle_path = tle_path.get('file', '')
-            tle_path = tle_path or config['layers'].get('l1_macro', {}).get('tle_file', '')
+            tle_path = tle_path or normalized_config['layers'].get('l1_macro', {}).get('tle_file', '')
             if tle_path:
                 selector = SatelliteSelector(tle_path, strict=strict, min_elevation_deg=5.0)
-                target_ids = config['layers'].get('l1_macro', {}).get('target_norad_ids')
+                target_ids = normalized_config['layers'].get('l1_macro', {}).get('target_norad_ids')
                 if target_ids:
                     target_ids = [str(x) for x in (target_ids if isinstance(target_ids, list) else [target_ids])]
                 sat_info = selector.select(
                     timestamp=current_time,
-                    center=(config['origin']['latitude'], config['origin']['longitude']),
+                    center=(normalized_config['origin']['latitude'], normalized_config['origin']['longitude']),
                     target_ids=target_ids,
                     strict=strict,
                 )
@@ -256,36 +313,36 @@ def run_simulation(config: dict, output_dir: Path):
         sim_logger.log_layer_end("FramePipeline")
 
         # Save individual layers
-        if config['output']['save_individual_layers']:
+        if normalized_config['output']['save_individual_layers']:
             if 'l1' in contributions:
                 plot_radio_map(contributions['l1'],
                                title=f"L1 Macro - {current_time.isoformat()}",
                                output_file=str(output_dir / f"l1_macro_{frame_count:04d}.png"),
-                               dpi=config['output']['dpi'])
+                               dpi=normalized_config['output']['dpi'])
             if 'l2' in contributions:
                 plot_radio_map(contributions['l2'],
                                title=f"L2 Terrain - {current_time.isoformat()}",
                                output_file=str(output_dir / f"l2_topo_{frame_count:04d}.png"),
-                               dpi=config['output']['dpi'])
+                               dpi=normalized_config['output']['dpi'])
             if 'l3' in contributions:
                 plot_radio_map(contributions['l3'],
                                title=f"L3 Urban - {current_time.isoformat()}",
                                output_file=str(output_dir / f"l3_urban_{frame_count:04d}.png"),
-                               dpi=config['output']['dpi'])
+                               dpi=normalized_config['output']['dpi'])
             plot_layer_comparison(
                 l1_map=contributions.get('l1'),
                 l2_map=contributions.get('l2'),
                 l3_map=contributions.get('l3'),
                 composite_map=composite_map,
                 output_file=str(output_dir / f"comparison_{frame_count:04d}.png"),
-                dpi=config['output']['dpi'],
+                dpi=normalized_config['output']['dpi'],
             )
 
-        if config['output']['save_composite']:
+        if normalized_config['output']['save_composite']:
             plot_radio_map(composite_map,
                            title=f"Composite Radio Map - {current_time.isoformat()}",
                            output_file=str(output_dir / f"composite_{frame_count:04d}.png"),
-                           dpi=config['output']['dpi'])
+                           dpi=normalized_config['output']['dpi'])
             from src.products.manifest import ProvenanceBlock, BenchmarkMode, MANIFEST_SCHEMA_VERSION, _sha256_dict
             import subprocess as _sp
             try:
@@ -319,8 +376,8 @@ def run_simulation(config: dict, output_dir: Path):
             frame_manifest = ProductManifest.build(
                 frame_id=frame.frame_id,
                 timestamp_utc=frame.timestamp.isoformat(),
-                config=config,
-                data_snapshot_id=data_snapshot_id,
+                config=normalized_config,
+                data_snapshot_id=normalized_config.get('data_validation', {}).get('snapshot_id', ''),
                 input_files=collect_input_file_paths(manifest_config, strict=strict),
                 hash_files=True,
                 fallbacks_used=frame_fallbacks,

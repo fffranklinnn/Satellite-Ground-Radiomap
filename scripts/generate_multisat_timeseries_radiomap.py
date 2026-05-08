@@ -343,6 +343,7 @@ def compute_satellite_maps(
     timestamp: datetime,
     norad_id: str,
     *,
+    enable_l1: bool,
     enable_l2: bool,
     enable_l3: bool,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any], "FrameContext"]:
@@ -367,18 +368,35 @@ def compute_satellite_maps(
     )
     frame = frame_builder.build(timestamp, sat_info=sat_info)
 
-    # L1: propagate_entry uses frame-bound satellite geometry
-    entry = l1_layer.propagate_entry(frame)
-    l1_map = entry.total_loss_db
-    sat = {
-        "norad_id": entry.norad_id or norad_id,
-        "lat_deg": entry.sat_lat_deg,
-        "lon_deg": entry.sat_lon_deg,
-        "alt_m": entry.sat_alt_m,
-        "azimuth_deg": float(entry.azimuth_deg[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
-        "elevation_deg": float(entry.elevation_deg[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
-        "slant_range_m": float(entry.slant_range_m[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
-    }
+    if enable_l1:
+        # L1: propagate_entry uses frame-bound satellite geometry
+        entry = l1_layer.propagate_entry(frame)
+        l1_map = entry.total_loss_db
+        sat = {
+            "norad_id": entry.norad_id or norad_id,
+            "lat_deg": entry.sat_lat_deg,
+            "lon_deg": entry.sat_lon_deg,
+            "alt_m": entry.sat_alt_m,
+            "azimuth_deg": float(entry.azimuth_deg[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
+            "elevation_deg": float(entry.elevation_deg[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
+            "slant_range_m": float(entry.slant_range_m[entry.native_grid.ny // 2, entry.native_grid.nx // 2]),
+        }
+    else:
+        entry = None
+        l1_map = np.full(
+            (frame_builder.grid.ny, frame_builder.grid.nx),
+            float(l1_layer.NO_COVERAGE_LOSS_DB),
+            dtype=np.float32,
+        )
+        sat = {
+            "norad_id": norad_id,
+            "lat_deg": sat_info.get("lat_deg", float("nan")),
+            "lon_deg": sat_info.get("lon_deg", float("nan")),
+            "alt_m": sat_info.get("alt_m", float("nan")),
+            "azimuth_deg": float(sat_info.get("azimuth_deg", float("nan"))),
+            "elevation_deg": float(sat_info.get("elevation_deg", float("nan"))),
+            "slant_range_m": float(sat_info.get("slant_range_m", float("nan"))),
+        }
 
     # L2: propagate_terrain uses frame.grid.sw_corner() — no manual extras injection
     if enable_l2:
@@ -649,6 +667,7 @@ def main() -> None:
                                 frame_builder=frame_builder,
                                 timestamp=ts,
                                 norad_id=norad_id,
+                                enable_l1=policy.is_enabled("l1_macro"),
                                 enable_l2=policy.is_enabled("l2_topo"),
                                 enable_l3=policy.is_enabled("l3_urban"),
                             )

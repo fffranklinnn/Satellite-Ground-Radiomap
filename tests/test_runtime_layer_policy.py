@@ -798,6 +798,7 @@ def test_multisat_compute_satellite_maps_respects_policy_disabled_layers():
             frame_builder=frame_builder,
             timestamp=TS,
             norad_id="25544",
+            enable_l1=True,
             enable_l2=False,
             enable_l3=False,
         )
@@ -808,6 +809,38 @@ def test_multisat_compute_satellite_maps_respects_policy_disabled_layers():
     np.testing.assert_array_equal(l2_map, np.zeros((8, 8), dtype=np.float32))
     np.testing.assert_array_equal(l3_map, np.zeros((8, 8), dtype=np.float32))
     np.testing.assert_array_equal(total_map, np.full((8, 8), 150.0, dtype=np.float32))
+    assert sat_info["norad_id"] == "25544"
+    assert frame is FRAME
+
+
+def test_multisat_skips_l1_propagation_when_policy_disables_it():
+    l1 = MagicMock()
+    l1.NO_COVERAGE_LOSS_DB = 300.0
+    l1.propagate_entry.return_value = MagicMock()
+    l1.config = {"tle_file": "test.tle"}
+    l2 = MagicMock()
+    l3 = MagicMock()
+
+    frame_builder = MagicMock(grid=GRID, build=MagicMock(return_value=FRAME))
+    with patch("src.planning.satellite_selector.SatelliteSelector") as selector_cls, \
+         patch("src.compose.project_to_product_grid", return_value={}), \
+         patch("src.context.multiscale_map.MultiScaleMap.compose", return_value=MagicMock(composite_db=np.full((8, 8), 300.0, dtype=np.float32))):
+        selector_cls.return_value.select.return_value = {"norad_id": "25544", "azimuth_deg": 180.0, "elevation_deg": 45.0, "slant_range_m": 600_000.0, "lat_deg": 34.0, "lon_deg": 108.0, "alt_m": 550000.0}
+        l1_map, l2_map, l3_map, total_map, sat_info, frame = multisat_module.compute_satellite_maps(
+            l1_layer=l1,
+            l2_layer=l2,
+            l3_layer=l3,
+            frame_builder=frame_builder,
+            timestamp=TS,
+            norad_id="25544",
+            enable_l1=False,
+            enable_l2=False,
+            enable_l3=False,
+        )
+
+    assert l1.propagate_entry.call_count == 0
+    np.testing.assert_array_equal(l1_map, np.full((8, 8), 300.0, dtype=np.float32))
+    np.testing.assert_array_equal(total_map, np.full((8, 8), 300.0, dtype=np.float32))
     assert sat_info["norad_id"] == "25544"
     assert frame is FRAME
 

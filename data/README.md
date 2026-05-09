@@ -48,23 +48,33 @@ data/
 
 说明：L3 主流程需要 tile cache，直接读取原始 shp 不参与在线计算。
 
-## 3. 当前数据完整性（基于仓库现状）
+## 3. 当前数据完整性（文档约定）
 
 | 项 | 现状 | 说明 |
 |---|---|---|
-| TLE | 有 | 2025-01-01 数据可用 |
-| IONEX | 有 | 可用于 TEC 查询 |
-| ERA5 pressure-level | 有 | 可提取 IWV |
-| ERA5 single-level | 脚本有 | 变量下载脚本已提供，是否下载由本地数据决定 |
+| TLE | 依本地目录为准 | 一般按日期组织 |
+| IONEX | 依本地目录为准 | 一般按日组织 |
+| ERA5 pressure-level | 依本地目录为准 | `.nc` 才能直接给运行脚本使用 |
+| ERA5 single-level | 脚本有 | 是否下载由本地数据决定 |
 | DEM | 有 | 全国覆盖 |
 | L3 原始 shp | 有 | 陕西省范围 |
 | L3 多城市 cache | 部分 | 现成 cache 主要是西安 |
+
+实际是否“齐全”，不要只看仓库目录，要看具体 config 是否引用了正确日期/区域文件。
 
 ## 4. 数据准备建议
 
 1. 以 `configs/mission_config.yaml` 为准，保证路径可解析。
 2. 所有大文件保持在 `data/` 下并使用 `.gitignore` 规则。
 3. 若做省域/全年批量，优先按时间片和区域片分批下载、分批计算。
+
+如果目标是“2025 年每天都能生成 radiomap”，通常需要分别考虑：
+
+- TLE：最好每天有对应文件
+- IONEX：最好每天有对应文件
+- ERA5：至少要覆盖目标日期；当前主流程读的是单个 `.nc` 路径
+- DEM：静态一次即可
+- L3 cache：仅城市场景需要；山区/野外一般不需要
 
 ## 5. 获取示例
 
@@ -115,7 +125,17 @@ IONEX 批量下载：
 python data/l1_space/data/NASAcddis.py
 ```
 
-## 6. `output/datasets/sgmrm_v1/` 目录约定（draft）
+## 6. Practical notes for this repo
+
+- 目前最常见的数据缺口不是 DEM，也不是全年 TLE/IONEX，而是 ERA5 覆盖不完整或 config 仍指向示例文件。
+- `layers.l1_macro.era5_file` 与 `ionex_file` 不会按日期自动切换；如果脚本没有额外包装逻辑，你需要显式改配置或用外层脚本生成运行时配置。
+- 对山区场景，L2 是否生效主要取决于：
+  - DEM 可读
+  - 卫星几何是否带来遮挡
+  - product 覆盖范围是否设置正确
+- 对城市场景，除了 TLE/IONEX/ERA5，还要确认 `tile_cache_root` 对应的 L3 cache 已准备好。
+
+## 7. `output/datasets/sgmrm_v1/` 目录约定（draft）
 
 除原始输入数据外，当前项目已经开始在 `output/datasets/sgmrm_v1/` 下整理 tile-level prototype / pilot 样本。
 
@@ -154,7 +174,7 @@ output/datasets/sgmrm_v1/
 - `condition_axes`：该样本参与的条件轴列表
 - `condition_groups`：该样本所属 matched sweep 组列表（注意是列表，不是单值）
 
-## 7. 相关文档
+## 8. 相关文档
 
 - L1 数据细节：[l1_space/README.md](l1_space/README.md)
 - L1 数据工作区细节：[l1_space/data/README.md](l1_space/data/README.md)

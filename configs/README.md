@@ -5,6 +5,11 @@
 当前主配置：`mission_config.yaml`。
 场景预设：`presets/*.yaml`
 
+当前更推荐的实际运行方式是：
+
+- 通用验证：`configs/presets/*.yaml`
+- 历史兼容主流程：`configs/mission_config.yaml`
+
 ## 1. 设计原则
 
 - 顶层只定义运行参数，不放业务代码。
@@ -106,6 +111,27 @@ incident_dir:
 | `dpi` | PNG DPI |
 | `colormap` | 可视化配色 |
 
+### `product`
+
+`product` 决定最终导出的空间范围和尺寸，而不只是显示设置。
+
+| 字段 | 说明 |
+|---|---|
+| `grid_size` | 最终导出网格边长（当前常用 256） |
+| `coverage_km` | 最终导出覆盖宽度（km） |
+
+当前推荐语义：
+
+- 城市场景：`product.coverage_km = 0.256`
+- 山区/野外场景：`product.coverage_km = 25.6`
+
+如果未显式配置，`scripts/generate_multisat_timeseries_radiomap.py` 现在会按层自动推断：
+
+- 优先 `product.*`
+- 其次已启用的 `L3`
+- 再其次已启用的 `L2`
+- 最后回退到 `L1`
+
 ### 顶层兼容字段（当前主流程未直接消费）
 
 `mission_config.yaml` 中还包含以下字段，主要用于元信息或历史兼容：
@@ -163,6 +189,19 @@ python main.py --config configs/mission_config.yaml --output output/
 
 或复制为自定义配置再运行。
 
+使用 scene preset 直接生成小批量验证结果：
+
+```bash
+python scripts/generate_multisat_timeseries_radiomap.py \
+  --config configs/presets/qinling_mountain.yaml \
+  --start 2025-05-01T00:00:00Z \
+  --end 2025-05-01T00:05:00Z \
+  --step-minutes 0.5 \
+  --output-dir output/experiments/qinling_mountain/2025-05-01 \
+  --region-id qinling_mountain \
+  --save-per-satellite
+```
+
 数据完整性检查（不跑仿真）：
 
 ```bash
@@ -177,3 +216,8 @@ python main.py --config configs/mission_config.yaml --check-data-only
 - `presets/loess_plateau.yaml`：黄土高原地区，`mountain_rural`
 
 这些预设默认使用 2025-05-01 的示例 TLE 和同一套 L1 数据路径；实际跑别的日期时，改 `layers.l1_macro.tle_file` 和 `time.*` 即可。
+
+补充：
+
+- `xian_urban.yaml`：product 默认 `256 m`
+- 其余三个山区 preset：product 默认 `25.6 km`

@@ -102,6 +102,54 @@ python scripts/check_data_integrity.py --config configs/mission_config.yaml --st
 
 More script details: [scripts/README.md](scripts/README.md)
 
+### Recommended scene smoke runs
+
+For the current repo state, the most practical verification entry points are the scene presets + smoke scripts:
+
+```bash
+python scripts/run_xian_urban_smoke.py --output-root output/verify --gpu-id 0
+python scripts/run_qinling_smoke.py --output-root output/verify --gpu-id 0
+python scripts/run_huashan_smoke.py --output-root output/verify --gpu-id 0
+python scripts/run_loess_plateau_smoke.py --output-root output/verify --gpu-id 0
+```
+
+These scripts automatically:
+
+- copy the selected preset into the run directory
+- persist runtime parameters (`run_config.yaml`, `run_manifest.json`, `preset_config.yaml`)
+- call `scripts/generate_multisat_timeseries_radiomap.py`
+
+### Time-series dataset generation
+
+Example: generate Xi'an frames on 2025-05-01 every 30 seconds.
+
+```bash
+python scripts/generate_multisat_timeseries_radiomap.py \
+  --config configs/presets/xian_urban.yaml \
+  --start 2025-05-01T00:00:00Z \
+  --end 2025-05-01T00:59:30Z \
+  --step-minutes 0.5 \
+  --fusion-mode best-server \
+  --output-dir output/experiments/xian_urban/2025-05-01 \
+  --region-id xian_urban \
+  --save-per-satellite
+```
+
+Important:
+
+- use timezone-aware timestamps (`Z` or `+00:00`)
+- if target date changes, update `layers.l1_macro.tle_file`
+- `best-server` is pixel-wise winner-take-all over satellites
+- `soft-combine` is power-domain fusion across satellites
+
+### Re-label existing PNG outputs without recomputing physics
+
+```bash
+python scripts/relabel_radiomap_pngs.py output/experiments/huashan_mountain/2025-05-01
+```
+
+This only re-renders PNGs from saved `.npy + .json`; it does not recompute L1/L2/L3.
+
 ## 5. Data Snapshot in This Repository
 
 | Type | Path | Current role |
@@ -112,6 +160,12 @@ More script details: [scripts/README.md](scripts/README.md)
 | DEM | `data/l2_topo/china_dem_30.tif` | L2 terrain blockage |
 | L3 raw source | `data/l3_urban/shanxisheng/陕西省/*.shp` | Province-wide raw building vector source |
 | L3 runnable cache | `data/l3_urban/xian/tiles_60/` | Ready-to-run Xi'an building cache |
+
+Notes:
+
+- full-year TLE and IONEX may exist locally, but actual runtime depends on the path referenced by each config
+- DEM is static and reusable across dates
+- ERA5 availability is the most likely remaining blocker for new dates/regions
 
 ## 6. Repository Structure and Optimization Notes
 
@@ -135,7 +189,24 @@ Practical optimization recommendations:
 3. For long-term cleanliness, archive or remove local historical snapshots once no longer needed.
 4. Prefer script-based reproducibility (`scripts/`) over ad-hoc notebook outputs.
 
-## 7. Documentation Map
+## 7. Output Semantics
+
+Typical time-series runs produce:
+
+- `png/`: rendered radiomap images
+- `npy/`: raw path-loss arrays
+- `frame_json/`: per-frame metadata, satellite list, fusion stats
+- `per_satellite/<timestamp_region>/`: per-satellite PNG/NPY/JSON artifacts
+- `manifest.jsonl`: append-only run manifest
+
+Current default PNG semantics:
+
+- colorbar is `Loss (dB, lower is better)`
+- lower dB means less propagation loss and therefore stronger effective reception
+- brighter colors in `viridis` do not mean “better”; always follow the colorbar label first
+- if you only want to refresh labels/styles, use `scripts/relabel_radiomap_pngs.py`
+
+## 8. Documentation Map
 
 - Project docs index: [docs/README.md](docs/README.md)
 - Quick start: [docs/QUICKSTART.md](docs/QUICKSTART.md)
@@ -147,7 +218,7 @@ Practical optimization recommendations:
 - Utility modules: [src/utils/README.md](src/utils/README.md)
 - Tests: [tests/README.md](tests/README.md)
 
-## 8. Testing
+## 9. Testing
 
 ```bash
 pytest tests/

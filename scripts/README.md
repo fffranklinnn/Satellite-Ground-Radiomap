@@ -20,6 +20,8 @@
   - 可见星统计报表
 - `scripts/generate_multisat_timeseries_radiomap.py`
   - 多星长时序帧生成（best-server / soft-combine）
+- `scripts/relabel_radiomap_pngs.py`
+  - 从已有 `npy/json` 重新渲染 PNG；适合只修改 label、色条或显示模式
 
 ### 兼容包装器
 
@@ -73,13 +75,49 @@ python scripts/generate_xian_city_radiomap.py \
 
 ```bash
 python scripts/generate_multisat_timeseries_radiomap.py \
-  --config configs/mission_config.yaml \
-  --start 2025-01-01T00:00:00 \
-  --end 2025-01-01T03:00:00 \
+  --config configs/presets/xian_urban.yaml \
+  --start 2025-05-01T00:00:00Z \
+  --end 2025-05-01T03:00:00Z \
   --step-minutes 30 \
   --fusion-mode best-server \
-  --max-satellites 6
+  --max-satellites 8 \
+  --output-dir output/experiments/xian_urban/2025-05-01 \
+  --region-id xian_urban \
+  --save-per-satellite
 ```
+
+关键参数：
+
+- `--fusion-mode`
+  - `best-server`：逐像素选择总损耗最小的卫星
+  - `soft-combine`：按功率域做多星融合
+- `--display-mode`
+  - `loss`：PNG 色条显示真实 `Loss (dB, lower is better)`；当前默认
+  - `score`：只用于可视化的相对质量分数，不改变 `.npy/.json`
+- `--region-id`
+  - 写入输出文件名，便于后续数据集核对
+- `--save-per-satellite`
+  - 为每一帧导出每颗卫星的单独结果
+
+输出目录约定：
+
+```text
+<output-dir>/
+  png/
+  npy/
+  frame_json/
+  per_satellite/<timestamp_region>/
+  manifest.jsonl
+```
+
+每个 `frame_json/*.json` 当前包含：
+
+- 帧时间戳
+- 融合模式
+- product 网格覆盖范围
+- 可见卫星列表
+- 每颗卫星的 `best_server_pixel_count / best_server_pixel_share`
+- L1/L2/L3/Composite 统计
 
 ### 批量参数扫描
 
@@ -117,11 +155,27 @@ python scripts/run_loess_plateau_smoke.py --step-minutes 1.0
 - `run_manifest.json`
 - `preset_config.yaml`
 
+### 重新标注已有结果
+
+```bash
+python scripts/relabel_radiomap_pngs.py \
+  output/experiments/huashan_mountain/2025-05-01 \
+  output/experiments/qinling_mountain/2025-05-01 \
+  --display-mode loss
+```
+
+用途：
+
+- 统一更新 colorbar label
+- 在 `loss` / `score` 两种显示模式间切换
+- 不重新计算物理层，只覆盖 PNG
+
 ## 4. 输出约定
 
 - 大多数脚本默认将结果写入 `output/` 下的任务子目录。
 - 时序脚本通常输出 `png/`、`npy/`、`frame_json/` 与 `manifest.jsonl`。
 - 批处理脚本通常输出 `experiment_index.csv/json` 便于回溯。
+- 近期 smoke / scene 脚本还会保存运行时参数快照，便于复现实验。
 
 ## 5. 维护建议
 

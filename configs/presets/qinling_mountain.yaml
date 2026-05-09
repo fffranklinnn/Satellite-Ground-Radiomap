@@ -7,8 +7,8 @@ scene:
   profile: mountain_rural
 
 origin:
-  latitude: 34.15
-  longitude: 108.85
+  latitude: 33.85
+  longitude: 107.75
   altitude_m: 1200.0
 
 rf:

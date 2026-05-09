@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -80,6 +81,11 @@ def parse_args() -> argparse.Namespace:
                         help="Output root directory")
     parser.add_argument("--output-prefix", type=str, default="multisat_ts",
                         help="Frame output prefix")
+    parser.add_argument("--region-id", type=str, default=None,
+                        help="Optional region identifier embedded in output filenames")
+    parser.add_argument("--save-per-satellite", action="store_true", default=True,
+                        help="Save per-satellite single-result artifacts for each frame")
+    parser.add_argument("--no-save-per-satellite", action="store_false", dest="save_per_satellite")
     parser.add_argument("--dpi", type=int, default=180,
                         help="PNG DPI")
     parser.add_argument("--cmap", type=str, default="viridis",
@@ -285,6 +291,54 @@ def frame_stamp(ts: datetime) -> str:
     return ts.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def sanitize_filename_token(value: Any) -> str:
+    text = str(value).strip().replace(" ", "_")
+    text = re.sub(r"[^A-Za-z0-9._-]+", "_", text)
+    text = text.strip("._-")
+    return text or "unknown"
+
+
+def format_metric_token(value: Any, *, decimals: int) -> str:
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return "nan"
+    if np.isnan(val):
+        return "nan"
+    return f"{val:.{decimals}f}".replace(".", "p")
+
+
+def build_frame_base_name(
+    *,
+    prefix: str,
+    stamp: str,
+    region_id: str,
+    sat_meta: Dict[str, Any],
+) -> str:
+    norad_id = sanitize_filename_token(sat_meta.get("norad_id", "none"))
+    az_text = format_metric_token(sat_meta.get("azimuth_deg"), decimals=2)
+    el_text = format_metric_token(sat_meta.get("elevation_deg"), decimals=2)
+    rng_text = format_metric_token(sat_meta.get("slant_range_km"), decimals=1)
+    return (
+        f"{prefix}_{stamp}_{sanitize_filename_token(region_id)}_{norad_id}"
+        f"_az{az_text}_el{el_text}_rng{rng_text}km"
+    )
+
+
+def build_satellite_frame_base_name(
+    *,
+    prefix: str,
+    stamp: str,
+    region_id: str,
+    sat_rank: int,
+    sat_meta: Dict[str, Any],
+) -> str:
+    return (
+        f"{prefix}_rank{int(sat_rank):02d}_"
+        f"{build_frame_base_name(prefix='', stamp=stamp, region_id=region_id, sat_meta=sat_meta).lstrip('_')}"
+    )
+
+
 def resolve_multisat_policy(config: Dict[str, Any], strict: bool):
     policy_config = dict(config)
     scene = policy_config.get("scene", {})
@@ -357,8 +411,13 @@ def compute_satellite_maps(
     matching the canonical contract in main.py and BenchmarkRunner.
     """
     from src.planning.satellite_selector import SatelliteSelector
-    tle_cfg = l1_layer.config.get("tle", {})
-    tle_path = (tle_cfg.get("file") if isinstance(tle_cfg, dict) else None) or l1_layer.config.get("tle_file", "")
+    l1_runtime_cfg = getattr(l1_layer, "cfg", None)
+    if not isinstance(l1_runtime_cfg, dict):
+        l1_runtime_cfg = l1_layer.config
+    tle_cfg = l1_runtime_cfg.get("tle", {})
+    tle_path = (tle_cfg.get("file") if isinstance(tle_cfg, dict) else None) or l1_runtime_cfg.get("tle_file", "")
+    if not tle_path:
+        raise ValueError("L1 runtime config is missing TLE path (expected `tle.file` or `tle_file`).")
     selector = SatelliteSelector(str(tle_path), strict=False, min_elevation_deg=-90.0)
     sat_info = selector.select(
         timestamp=timestamp,
@@ -535,6 +594,17 @@ def main() -> None:
     if not out_root.is_absolute():
         out_root = project_root / out_root
     out_dirs = make_output_dirs(out_root)
+    if args.region_id:
+        region_id = args.region_id
+    else:
+        resolved_config_name = Path(config_path).name
+        if resolved_config_name == "run_config.yaml":
+            region_id = Path(config_path).resolve().parent.parent.name
+        else:
+            region_id = Path(config_path).stem
+    per_sat_root = out_root / "per_satellite"
+    if args.save_per_satellite:
+        per_sat_root.mkdir(parents=True, exist_ok=True)
 
     # L1 drives satellite enumeration for this generator, so keep it available even
     # when policy disables it for propagation.
@@ -602,11 +672,6 @@ def main() -> None:
             for frame_idx, (ts, visible) in enumerate(zip(timestamps, visible_plan)):
                 frame_t0 = time.time()
                 stamp = frame_stamp(ts)
-                base = f"{args.output_prefix}_{frame_idx:06d}_{stamp}"
-
-                png_rel = Path("png") / f"{base}.png"
-                npy_rel = Path("npy") / f"{base}.npy"
-                json_rel = Path("frame_json") / f"{base}.json"
 
                 visible_count = len(visible)
                 print(
@@ -616,6 +681,7 @@ def main() -> None:
 
                 sat_entries: List[Dict[str, Any]] = []
                 sat_frames: List[Any] = []  # store pre-bound FrameContext per satellite
+                sat_maps: List[Dict[str, Any]] = []
                 sat_errors: List[Dict[str, Any]] = []
                 status = "ok"
                 if l1_layer is not None:
@@ -678,6 +744,12 @@ def main() -> None:
                             sat_meta["sat_total_mean_db"] = float(np.nanmean(total_map))
                             sat_entries.append(sat_meta)
                             sat_frames.append(sat_frame)
+                            sat_maps.append({
+                                "l1_map": l1_map,
+                                "l2_map": l2_map,
+                                "l3_map": l3_map,
+                                "total_map": total_map,
+                            })
 
                             if args.fusion_mode == "best-server":
                                 sat_idx = len(sat_entries) - 1
@@ -744,8 +816,93 @@ def main() -> None:
                                 float(pwr / total_power) if total_power > 0.0 else 0.0
                             )
 
+                if sat_entries:
+                    if args.fusion_mode == "best-server":
+                        primary_sat = max(
+                            sat_entries,
+                            key=lambda item: int(item.get("best_server_pixel_count", 0)),
+                        )
+                    else:
+                        primary_sat = sat_entries[0]
+                else:
+                    primary_sat = {
+                        "norad_id": "none",
+                        "azimuth_deg": float("nan"),
+                        "elevation_deg": float("nan"),
+                        "slant_range_km": float("nan"),
+                    }
+
+                base = build_frame_base_name(
+                    prefix=f"{args.output_prefix}_{frame_idx:06d}",
+                    stamp=stamp,
+                    region_id=region_id,
+                    sat_meta=primary_sat,
+                )
+                png_rel = Path("png") / f"{base}.png"
+                npy_rel = Path("npy") / f"{base}.npy"
+                json_rel = Path("frame_json") / f"{base}.json"
+
                 png_path = out_dirs["png"] / f"{base}.png"
                 frame_json_path = out_dirs["json"] / f"{base}.json"
+
+                if args.save_per_satellite and sat_entries:
+                    frame_sat_dir = per_sat_root / f"{stamp}_{sanitize_filename_token(region_id)}"
+                    frame_sat_dir.mkdir(parents=True, exist_ok=True)
+                    for sat_rank, (sat_meta, sat_frame, sat_map) in enumerate(zip(sat_entries, sat_frames, sat_maps), start=1):
+                        sat_base = build_satellite_frame_base_name(
+                            prefix=args.output_prefix,
+                            stamp=stamp,
+                            region_id=region_id,
+                            sat_rank=sat_rank,
+                            sat_meta=sat_meta,
+                        )
+                        sat_png_path = frame_sat_dir / f"{sat_base}.png"
+                        sat_npy_path = frame_sat_dir / f"{sat_base}_path_loss_map.npy"
+                        sat_json_path = frame_sat_dir / f"{sat_base}.json"
+                        sat_png_path.parent.mkdir(parents=True, exist_ok=True)
+                        sat_total_map = np.asarray(sat_map["total_map"], dtype=np.float32)
+                        np.save(sat_npy_path, np.asarray(sat_total_map, dtype=np.float32))
+                        plot_radio_map(
+                            loss_map=sat_total_map,
+                            title=(
+                                f"Single-Satellite Radiomap\n"
+                                f"{ts.strftime('%Y-%m-%d %H:%M:%S UTC')} | "
+                                f"norad={sat_meta.get('norad_id')} | "
+                                f"az={sat_meta.get('azimuth_deg', float('nan')):.2f} | "
+                                f"el={sat_meta.get('elevation_deg', float('nan')):.2f}"
+                            ),
+                            output_file=str(sat_png_path),
+                            cmap=args.cmap,
+                            show_colorbar=True,
+                            show_stats=True,
+                            origin_lat=origin_lat,
+                            origin_lon=origin_lon,
+                            coverage_km=0.256,
+                            dpi=args.dpi,
+                        )
+                        sat_json_path.write_text(
+                            json.dumps(
+                                {
+                                    "frame_id": base,
+                                    "timestamp_utc": ts.isoformat(),
+                                    "satellite": sat_meta,
+                                    "layer_stats_db": {
+                                        "l1": array_stats(np.asarray(sat_map["l1_map"], dtype=np.float32)),
+                                        "l2": array_stats(np.asarray(sat_map["l2_map"], dtype=np.float32)),
+                                        "l3": array_stats(np.asarray(sat_map["l3_map"], dtype=np.float32)),
+                                        "composite": array_stats(sat_total_map),
+                                    },
+                                    "artifact": {
+                                        "png": str(sat_png_path.relative_to(out_root)),
+                                        "npy": str(sat_npy_path.relative_to(out_root)),
+                                        "json": str(sat_json_path.relative_to(out_root)),
+                                    },
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
 
                 # Build per-frame manifest and export npy via export_dataset()
                 frame_manifest = ProductManifest.build(

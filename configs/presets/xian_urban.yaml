@@ -87,6 +87,10 @@ output:
   dpi: 150
   colormap: "viridis"
 
+product:
+  grid_size: 256
+  coverage_km: 0.256
+
 data_validation:
   strict: false
 

@@ -90,6 +90,8 @@ def parse_args() -> argparse.Namespace:
                         help="PNG DPI")
     parser.add_argument("--cmap", type=str, default="viridis",
                         help="Matplotlib colormap for output PNG")
+    parser.add_argument("--display-mode", type=str, choices=["loss", "score"], default="loss",
+                        help="PNG visualization mode; does not affect saved NPY/JSON values")
     parser.add_argument("--allow-missing-data", action="store_true",
                         help="Allow missing optional/required data where fallback exists")
     return parser.parse_args()
@@ -169,8 +171,24 @@ def build_frame_builder_for_script(config: dict, origin_lat: float, origin_lon: 
     l3_km = float(l3_cfg.get("coverage_km", 0.256)) if l3_enabled else None
     l3_nx = int(l3_cfg.get("grid_size", 256)) if l3_enabled else None
 
-    product_km = float(config.get("product", {}).get("coverage_km", 0.256))
-    product_nx = int(config.get("product", {}).get("grid_size", 256))
+    product_cfg = config.get("product", {})
+    if "coverage_km" in product_cfg:
+        product_km = float(product_cfg["coverage_km"])
+    elif l3_enabled and l3_km is not None:
+        product_km = l3_km
+    elif l2_enabled and l2_km is not None:
+        product_km = l2_km
+    else:
+        product_km = coarse_km
+
+    if "grid_size" in product_cfg:
+        product_nx = int(product_cfg["grid_size"])
+    elif l3_enabled and l3_nx is not None:
+        product_nx = l3_nx
+    elif l2_enabled and l2_nx is not None:
+        product_nx = l2_nx
+    else:
+        product_nx = grid_size
 
     grid = GridSpec.from_legacy_args(origin_lat, origin_lon, coarse_km, grid_size, grid_size)
     coverage = CoverageSpec.from_config(
@@ -181,6 +199,14 @@ def build_frame_builder_for_script(config: dict, origin_lat: float, origin_lon: 
         urban_coverage_km=l3_km, urban_nx=l3_nx, urban_ny=l3_nx,
     )
     return FrameBuilder(grid=grid, coverage=coverage)
+
+
+def frame_builder_product_coverage_km(frame_builder: FrameBuilder) -> float:
+    """Return product coverage width in km for plotting/export labels."""
+    coverage = frame_builder.coverage
+    if coverage is not None:
+        return float(coverage.product_grid.width_m / 1000.0)
+    return float(frame_builder.grid.width_m / 1000.0)
 
 
 def build_time_grid(start: datetime,
@@ -616,6 +642,7 @@ def main() -> None:
         origin_lat,
         origin_lon,
     )
+    product_coverage_km = frame_builder_product_coverage_km(frame_builder)
     input_file_paths = collect_manifest_input_file_paths(manifest_config, strict=strict)
 
     if target_norad_ids and l1_layer is not None:
@@ -873,11 +900,12 @@ def main() -> None:
                             ),
                             output_file=str(sat_png_path),
                             cmap=args.cmap,
+                            display_mode=args.display_mode,
                             show_colorbar=True,
                             show_stats=True,
                             origin_lat=origin_lat,
                             origin_lon=origin_lon,
-                            coverage_km=0.256,
+                            coverage_km=product_coverage_km,
                             dpi=args.dpi,
                         )
                         sat_json_path.write_text(
@@ -945,11 +973,12 @@ def main() -> None:
                     ),
                     output_file=str(png_path),
                     cmap=args.cmap,
+                    display_mode=args.display_mode,
                     show_colorbar=True,
                     show_stats=True,
                     origin_lat=origin_lat,
                     origin_lon=origin_lon,
-                    coverage_km=0.256,
+                    coverage_km=product_coverage_km,
                     dpi=args.dpi,
                 )
 
@@ -961,11 +990,16 @@ def main() -> None:
                         "lat": origin_lat,
                         "lon": origin_lon,
                     },
+                    "product_grid": {
+                        "coverage_km": float(product_coverage_km),
+                        "grid_size": int(composite.shape[0]),
+                    },
                     "fusion": {
                         "mode": args.fusion_mode,
                         "max_satellites": int(args.max_satellites),
                         "min_elevation_deg": args.min_elevation_deg,
                         "soft_min_power": float(args.soft_min_power),
+                        "display_mode": args.display_mode,
                     },
                     "satellite_count_visible": int(visible_count),
                     "satellite_count_used": int(len(sat_entries)),

@@ -25,7 +25,8 @@ def plot_radio_map(loss_map: np.ndarray,
                    origin_lat: Optional[float] = None,
                    origin_lon: Optional[float] = None,
                    coverage_km: Optional[float] = None,
-                   dpi: int = 150) -> None:
+                   dpi: int = 150,
+                   display_mode: str = "loss") -> None:
     """
     Plot a radio map as a 2D heatmap.
 
@@ -42,19 +43,33 @@ def plot_radio_map(loss_map: np.ndarray,
         origin_lon: Origin longitude (degrees) — enables geographic axis labels
         coverage_km: Coverage width in km — enables geographic axis labels
         dpi: Output DPI for saved figure
+        display_mode: "loss" keeps physical loss values; "score" renders
+            a relative quality score where higher is better
     """
+    if display_mode not in {"loss", "score"}:
+        raise ValueError("display_mode must be 'loss' or 'score'")
+
     fig, ax = plt.subplots(figsize=(10, 8))
 
     valid = loss_map[~np.isnan(loss_map)]
-    auto_vmin = float(np.nanmin(loss_map)) if vmin is None else vmin
-    auto_vmax = float(np.nanmax(loss_map)) if vmax is None else vmax
+    if display_mode == "score":
+        plot_map = np.nanmax(loss_map) - loss_map
+        colorbar_label = "Relative Receive Quality (higher is better)"
+        stats_unit = "score"
+    else:
+        plot_map = loss_map
+        colorbar_label = "Loss (dB, lower is better)"
+        stats_unit = "dB"
 
-    im = ax.imshow(loss_map, cmap=cmap, vmin=auto_vmin, vmax=auto_vmax,
+    auto_vmin = float(np.nanmin(plot_map)) if vmin is None else vmin
+    auto_vmax = float(np.nanmax(plot_map)) if vmax is None else vmax
+
+    im = ax.imshow(plot_map, cmap=cmap, vmin=auto_vmin, vmax=auto_vmax,
                    origin='upper', interpolation='nearest')
 
     if show_colorbar:
         cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label('Loss (dB)', rotation=270, labelpad=20)
+        cbar.set_label(colorbar_label, rotation=270, labelpad=20)
 
     # Geographic axis ticks
     if origin_lat is not None and origin_lon is not None and coverage_km is not None:
@@ -81,10 +96,11 @@ def plot_radio_map(loss_map: np.ndarray,
 
     # Stats overlay
     if show_stats and len(valid) > 0:
-        stats_text = (f"mean={np.mean(valid):.2f} dB\n"
-                      f"std={np.std(valid):.2f} dB\n"
-                      f"min={np.min(valid):.2f} dB\n"
-                      f"max={np.max(valid):.2f} dB")
+        stats_valid = plot_map[~np.isnan(plot_map)]
+        stats_text = (f"mean={np.mean(stats_valid):.2f} {stats_unit}\n"
+                      f"std={np.std(stats_valid):.2f} {stats_unit}\n"
+                      f"min={np.min(stats_valid):.2f} {stats_unit}\n"
+                      f"max={np.max(stats_valid):.2f} {stats_unit}")
         ax.text(0.02, 0.02, stats_text, transform=ax.transAxes, fontsize=8,
                 verticalalignment='bottom', fontfamily='monospace',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))

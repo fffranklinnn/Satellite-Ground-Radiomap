@@ -18,7 +18,7 @@
 ## 3. 推荐替代入口
 
 - 主流程：`python main.py --config configs/mission_config.yaml`
-- 单次全物理图：`python scripts/generate_full_radiomap.py`
+- 单次全物理图：`python scripts/generate_full_radiomap.py`（legacy wrapper）
 - 批量任务：`python scripts/batch_city_experiments.py`
 
 ## 4. 如果要维护示例

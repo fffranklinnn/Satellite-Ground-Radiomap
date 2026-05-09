@@ -6,7 +6,7 @@
 
 | 文件类型 | 示例 | 用途 |
 |---|---|---|
-| TLE | `data/2025_0101.tle` | 卫星轨道传播与选星 |
+| TLE | `data/starlink-2025-tle/2025-01-01.tle` | 卫星轨道传播与选星 |
 | IONEX | `cddis_data_2025/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz` | TEC 查询 |
 | ERA5 pressure-level | `data_stream-oper_stepType-instant.nc` | `q` 积分得到 IWV |
 | ERA5 请求脚本 | `cds.py` | 下载 pressure-level 数据 |
@@ -45,6 +45,8 @@
 - `valid_time`
 
 通过 `trapz(q, p)` 得到 IWV（kg/m^2），供 L1 大气损耗函数使用。
+
+说明：读取 `.nc` 需要可用的 NetCDF 后端（例如 `netCDF4` 或 `h5netcdf`）；否则数据检查会降级为 warning。
 
 ### Single-level（用于雨衰/云衰增强的准备）
 
@@ -125,7 +127,7 @@ L1 层配置（示例）：
 ```yaml
 layers:
   l1_macro:
-    tle_file: "data/2025_0101.tle"
+    tle_file: "data/starlink-2025-tle/2025-01-01.tle"
     ionex_file: "data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20250010000_01D_15M_GIM.INX.gz"
     era5_file: "data/l1_space/data/era5_pressure_levels_2025_nc/era5_pressure_levels_202501.nc"
 ```

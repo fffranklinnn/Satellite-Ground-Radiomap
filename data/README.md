@@ -6,7 +6,7 @@
 
 ```text
 data/
-├── 2025_0101.tle -> starlink-2025-tle/2025-01-01.tle
+├── starlink-2025-tle/2025-01-01.tle
 ├── l1_space/
 │   └── data/
 ├── l2_topo/
@@ -20,7 +20,7 @@ data/
 
 必需：
 
-- `data/2025_0101.tle`（或你自己的 TLE）
+- `data/starlink-2025-tle/2025-01-01.tle`（或你自己的 TLE）
 
 可选增强：
 
@@ -37,7 +37,7 @@ data/
 
 ### L2（地形层）
 
-- `data/l2_topo/china_dem_30m.tif`
+- `data/l2_topo/china_dem_30.tif`
 
 说明：L2 通过窗口读取，不会一次性把全国 DEM 全部加载到内存。
 
@@ -77,7 +77,7 @@ pip install cdsapi
 TLE（示例）：
 
 ```bash
-wget https://celestrak.com/NORAD/elements/starlink.txt -O data/2025_0101.tle
+wget https://celestrak.com/NORAD/elements/starlink.txt -O data/starlink-2025-tle/2025-01-01.tle
 ```
 
 ERA5 pressure-level 下载请求（需要 CDS 账号和 API key）：

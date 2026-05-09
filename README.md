@@ -91,11 +91,14 @@ python main.py --config configs/mission_config.yaml --output output/
 ### Common script entry points
 
 ```bash
-python scripts/generate_full_radiomap.py --timestamp 2025-01-01T06:00:00
-python scripts/report_satellite_visibility.py --start 2025-01-01T00:00:00 --end 2025-01-01T23:00:00 --step-hours 1
-python scripts/generate_feature_showcase.py --output-root output/feature_showcase_demo
+python main.py --config configs/mission_config.yaml --check-data-only
+python main.py --config configs/mission_config.yaml --strict-data
+python scripts/report_satellite_visibility.py --config configs/mission_config.yaml --step-hours 1
+python scripts/generate_multisat_timeseries_radiomap.py --config configs/mission_config.yaml --start 2025-01-01T00:00:00 --end 2025-01-01T03:00:00 --step-minutes 30
 python scripts/check_data_integrity.py --config configs/mission_config.yaml --strict
 ```
+
+`generate_full_radiomap.py` and `generate_feature_showcase.py` still run, but they are thin wrappers over `scripts/legacy/*`.
 
 More script details: [scripts/README.md](scripts/README.md)
 
@@ -103,10 +106,10 @@ More script details: [scripts/README.md](scripts/README.md)
 
 | Type | Path | Current role |
 |---|---|---|
-| TLE | `data/2025_0101.tle` | Main satellite ephemeris source for Jan 1, 2025 runs |
+| TLE | `data/starlink-2025-tle/2025-01-01.tle` | Main satellite ephemeris source |
 | IONEX | `data/l1_space/data/*.INX.gz` | TEC maps for ionosphere |
 | ERA5 pressure-level | `data/l1_space/data/*.nc` | IWV extraction (`q` integration) |
-| DEM | `data/l2_topo/china_dem_30m.tif` | L2 terrain blockage |
+| DEM | `data/l2_topo/china_dem_30.tif` | L2 terrain blockage |
 | L3 raw source | `data/l3_urban/shanxisheng/陕西省/*.shp` | Province-wide raw building vector source |
 | L3 runnable cache | `data/l3_urban/xian/tiles_60/` | Ready-to-run Xi'an building cache |
 

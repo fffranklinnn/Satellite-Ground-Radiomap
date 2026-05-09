@@ -9,8 +9,8 @@ python main.py --help
 
 推荐先确认以下关键文件存在：
 
-- `data/2025_0101.tle`
-- `data/l2_topo/china_dem_30m.tif`（L2）
+- `data/starlink-2025-tle/2025-01-01.tle`
+- `data/l2_topo/china_dem_30.tif`（L2）
 - `data/l3_urban/xian/tiles_60/`（L3）
 - `data/l1_space/data/*.INX.gz`（可选，IONEX）
 - `data/l1_space/data/*.nc`（可选，ERA5）
@@ -46,15 +46,14 @@ output/
 
 ## 4. 常用脚本入口
 
-单时刻全效应图：
+主流程与检查：
 
 ```bash
-python scripts/generate_full_radiomap.py \
-  --config configs/mission_config.yaml \
-  --timestamp 2025-01-01T06:00:00
+python main.py --config configs/mission_config.yaml --check-data-only
+python scripts/check_data_integrity.py --config configs/mission_config.yaml --strict
 ```
 
-西安可见星统计：
+可见星统计与多星时序：
 
 ```bash
 python scripts/report_satellite_visibility.py \
@@ -63,23 +62,15 @@ python scripts/report_satellite_visibility.py \
   --end 2025-01-01T23:00:00 \
   --step-hours 1 \
   --output-csv output/visibility/xian_20250101_hourly.csv
-```
-
-功能展示图（地形/大气/radiomap 三类）：
-
-```bash
-python scripts/generate_feature_showcase.py \
+python scripts/generate_multisat_timeseries_radiomap.py \
   --config configs/mission_config.yaml \
-  --timestamp 2025-01-01T06:00:00 \
-  --output-root output/feature_showcase_demo
+  --start 2025-01-01T00:00:00 \
+  --end 2025-01-01T03:00:00 \
+  --step-minutes 30 \
+  --output-dir output/multisat_demo
 ```
 
-数据完整性检查（推荐先执行）：
-
-```bash
-python main.py --config configs/mission_config.yaml --check-data-only
-python scripts/check_data_integrity.py --config configs/mission_config.yaml --strict
-```
+`generate_full_radiomap.py` 和 `generate_feature_showcase.py` 现在是 legacy wrapper。
 
 ## 5. 最常见回退行为
 

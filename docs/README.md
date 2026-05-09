@@ -15,10 +15,8 @@
   - 三层架构、数据流、尺度对齐语义
 - [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)
   - 当前代码能力、数据现状、结构治理建议
-- [PHASE1_SUMMARY.md](PHASE1_SUMMARY.md)
-  - Phase 1 阶段性结果摘要
-- [PHASE1_COMPLETION_REPORT.md](PHASE1_COMPLETION_REPORT.md)
-  - Phase 1 完成报告与交付说明
+- [archive/README.md](archive/README.md)
+  - 历史计划、草稿与阶段报告
 
 ## 相关入口
 

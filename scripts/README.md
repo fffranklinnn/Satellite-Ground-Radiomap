@@ -37,6 +37,11 @@
 - `batch_city_experiments.py`
 - `generate_shaanxi_radiomap.py`
 - `generate_xian_full_from_shapefile.py`
+- `run_scene_smoke.py`
+- `run_xian_urban_smoke.py`
+- `run_qinling_smoke.py`
+- `run_huashan_smoke.py`
+- `run_loess_plateau_smoke.py`
 - `generate_global_map.py`
 - `generate_global_comparison.py`
 - `generate_l1_map.py`
@@ -96,6 +101,21 @@ python scripts/check_data_integrity.py \
   --config configs/mission_config.yaml \
   --strict
 ```
+
+### 场景 smoke test
+
+```bash
+python scripts/run_xian_urban_smoke.py --output-root output/verify --gpu-id 0
+python scripts/run_qinling_smoke.py --output-root output/verify --gpu-id 1 --max-frames 10
+python scripts/run_huashan_smoke.py --start 2025-05-01T12:00:00 --end 2025-05-01T12:04:30
+python scripts/run_loess_plateau_smoke.py --step-minutes 1.0
+```
+
+每次 smoke test 会在场景输出目录下额外保存：
+
+- `run_config.yaml`
+- `run_manifest.json`
+- `preset_config.yaml`
 
 ## 4. 输出约定
 

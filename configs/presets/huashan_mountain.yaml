@@ -1,0 +1,101 @@
+mission:
+  name: "SG-MRM Huashan Preset"
+  description: "Huashan mountain preset"
+  version: "1.0"
+
+scene:
+  profile: mountain_rural
+
+origin:
+  latitude: 34.50
+  longitude: 110.08
+  altitude_m: 1500.0
+
+rf:
+  frequency_ghz: 14.5
+  tx_power_dbm: 40.0
+  tx_polarization: "RHCP"
+  rx_polarization: "RHCP"
+
+satellite:
+  altitude_km: 550.0
+  tle_file: null
+
+time:
+  start: "2025-05-01T00:00:00"
+  end: "2025-05-01T23:59:30"
+  step_hours: 6
+  timezone: "UTC"
+
+layers:
+  l1_macro:
+    enabled: true
+    grid_size: 256
+    coverage_km: 256.0
+    resolution_m: 1000.0
+    frequency_ghz: 14.5
+    satellite_altitude_km: 550.0
+    tle_file: "data/starlink-2025-tle/2025-05-01.tle"
+    rain_rate_mm_h: 0.0
+    tec: 10.0
+    ionosphere:
+      use_ipp: true
+      use_slant_tec: true
+      shell_height_km: 350.0
+      max_mapping_factor: 8.0
+      enable_faraday: false
+      faraday_linear_only: true
+      fallback_b_t: 4.5e-5
+    polarization:
+      mismatch_angle_deg: 0.0
+      mode: "linear"
+    interference:
+      enable_interference: false
+      tx_power_dbm: 40.0
+      noise_floor_dbm: -110.0
+      max_interfering_sats: 20
+    ionex_file: "data/l1_space/data/cddis_data_2025/UPC0OPSRAP_20251210000_01D_15M_GIM.INX.gz"
+    era5_file: "data/l1_space/data/data_stream-oper_stepType-instant.nc"
+
+  l2_topo:
+    enabled: true
+    grid_size: 256
+    coverage_km: 25.6
+    resolution_m: 100.0
+    dem_file: "data/l2_topo/china_dem_30.tif"
+    frequency_ghz: 14.5
+    satellite_elevation_deg: 35.0
+    satellite_azimuth_deg: 180.0
+
+  l3_urban:
+    enabled: false
+    grid_size: 256
+    coverage_km: 0.256
+    resolution_m: 1.0
+    tile_cache_root: "data/l3_urban/xian/tiles_60"
+    nlos_loss_db: 20.0
+    occ_loss_db: 30.0
+    incident_dir:
+      az_deg: 180.0
+      el_deg: 35.0
+
+output:
+  directory: "output/presets/huashan_mountain"
+  format: "png"
+  save_individual_layers: true
+  save_composite: true
+  dpi: 150
+  colormap: "viridis"
+
+data_validation:
+  strict: false
+
+performance:
+  enable_profiling: false
+  parallel_processing: false
+  num_workers: 4
+
+logging:
+  level: "INFO"
+  log_file: "sg_mrm.log"
+  verbose: true

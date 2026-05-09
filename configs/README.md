@@ -3,6 +3,7 @@
 本目录存放 SG-MRM 的 YAML 配置文件。
 
 当前主配置：`mission_config.yaml`。
+场景预设：`presets/*.yaml`
 
 ## 1. 设计原则
 
@@ -167,3 +168,12 @@ python main.py --config configs/mission_config.yaml --output output/
 ```bash
 python main.py --config configs/mission_config.yaml --check-data-only
 ```
+
+## 5. 场景预设
+
+- `presets/xian_urban.yaml`：西安市城区，`urban_flat`
+- `presets/qinling_mountain.yaml`：秦岭地区，`mountain_rural`
+- `presets/huashan_mountain.yaml`：华山地区，`mountain_rural`
+- `presets/loess_plateau.yaml`：黄土高原地区，`mountain_rural`
+
+这些预设默认使用 2025-05-01 的示例 TLE 和同一套 L1 数据路径；实际跑别的日期时，改 `layers.l1_macro.tle_file` 和 `time.*` 即可。
